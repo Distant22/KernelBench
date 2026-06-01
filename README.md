@@ -194,5 +194,3 @@ MIT. Check `LICENSE.md` for more details.
 ```
 
 We are grateful for the support from [GPU Mode](https://gpu-mode.github.io/popcorn/), [PyTorch](https://pytorch.org/), [Modal Labs](https://modal.com/blog/accelerating-ai-research-case-study) and the broader open-source community that made this project possible.
-
-1234
