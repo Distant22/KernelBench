@@ -1,0 +1,29 @@
+name: kernelbench
+channels:
+  - defaults
+dependencies:
+  - python=3.10
+  - pip
+  - pip:
+    # PyTorch + Triton (CUDA 12.1 wheels；可在系統 CUDA 12.8 / V100 驅動下運作)
+    - --extra-index-url https://download.pytorch.org/whl/cu121
+    - torch==2.5.1
+    - triton==3.1.0
+
+    # KernelBench 評估管線必要相依
+    - numpy<2.0
+    - pydra-config
+    - modal
+    - tqdm
+    - ninja
+    - tomli
+    - tabulate
+    - einops
+    - python-dotenv
+    - packaging
+    - datasets
+    - transformers
+
+    # LLM 生成端 (跑 generate_samples.py 才會用到；一起裝省事)
+    - openai
+    - litellm
