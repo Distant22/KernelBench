@@ -78,7 +78,7 @@ PyTorch eager and \texttt{torch.compile} (Inductor) baselines measured on the
 same V100. All \NumCorrect/\NumProblems{} solutions pass correctness. The agent
 reaches a geometric-mean speedup of \GeoMeanEager{} over eager among correct
 solutions, with \FastOneEager{} of problems at or above parity
-(\texttt{fast\_1}) and headline wins up to 1.7$\times$ (RMSNorm), 1.5$\times$
+(\texttt{fast\_1}) and headline wins up to 1.7$\times$ (RMSNorm), 1.45$\times$
 (fused convolution + GroupNorm), and 1.5$\times$ (causal attention). Our central
 finding is a sharp, architecture-induced capability ceiling: on V100 FP32 the
 agent reliably \emph{wins} on memory-bound operators (softmax, RMSNorm,
