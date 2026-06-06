@@ -1,0 +1,278 @@
+{
+  "level1": {
+    "6_Matmul_with_large_K_dimension_.py": {
+      "mean": 4.66,
+      "std": 0.0321,
+      "min": 4.55,
+      "max": 4.68,
+      "num_trials": 100,
+      "hardware": "Tesla V100-SXM2-32GB",
+      "device": "cuda:0"
+    },
+    "9_Tall_skinny_matrix_multiplication_.py": {
+      "mean": 6.37,
+      "std": 2.45,
+      "min": 5.85,
+      "max": 30.7,
+      "num_trials": 100,
+      "hardware": "Tesla V100-SXM2-32GB",
+      "device": "cuda:0"
+    },
+    "16_Matmul_with_transposed_A.py": {
+      "mean": 9.65,
+      "std": 0.00331,
+      "min": 9.65,
+      "max": 9.66,
+      "num_trials": 100,
+      "hardware": "Tesla V100-SXM2-32GB",
+      "device": "cuda:0"
+    },
+    "18_Matmul_with_transposed_both.py": {
+      "mean": 9.13,
+      "std": 0.0916,
+      "min": 8.9,
+      "max": 9.19,
+      "num_trials": 100,
+      "hardware": "Tesla V100-SXM2-32GB",
+      "device": "cuda:0"
+    },
+    "23_Softmax.py": {
+      "mean": 34.7,
+      "std": 3.11,
+      "min": 34.2,
+      "max": 65.6,
+      "num_trials": 100,
+      "hardware": "Tesla V100-SXM2-32GB",
+      "device": "cuda:0"
+    },
+    "36_RMSNorm_.py": {
+      "mean": 48.4,
+      "std": 3.65,
+      "min": 47.9,
+      "max": 83.5,
+      "num_trials": 100,
+      "hardware": "Tesla V100-SXM2-32GB",
+      "device": "cuda:0"
+    },
+    "47_Sum_reduction_over_a_dimension.py": {
+      "mean": 11.9,
+      "std": 0.027,
+      "min": 11.9,
+      "max": 12.0,
+      "num_trials": 100,
+      "hardware": "Tesla V100-SXM2-32GB",
+      "device": "cuda:0"
+    },
+    "50_conv_standard_2D__square_input__square_kernel.py": {
+      "mean": 7.83,
+      "std": 0.0268,
+      "min": 7.74,
+      "max": 7.88,
+      "num_trials": 100,
+      "hardware": "Tesla V100-SXM2-32GB",
+      "device": "cuda:0"
+    },
+    "56_conv_standard_2D__asymmetric_input__asymmetric_kernel.py": {
+      "mean": 21.5,
+      "std": 0.113,
+      "min": 21.3,
+      "max": 22.3,
+      "num_trials": 100,
+      "hardware": "Tesla V100-SXM2-32GB",
+      "device": "cuda:0"
+    },
+    "61_conv_transposed_3D__square_input__square_kernel.py": {
+      "mean": 27.9,
+      "std": 0.206,
+      "min": 27.6,
+      "max": 29.6,
+      "num_trials": 100,
+      "hardware": "Tesla V100-SXM2-32GB",
+      "device": "cuda:0"
+    },
+    "76_conv_standard_1D_dilated_strided__.py": {
+      "mean": 40.8,
+      "std": 2.62,
+      "min": 39.3,
+      "max": 66.9,
+      "num_trials": 100,
+      "hardware": "Tesla V100-SXM2-32GB",
+      "device": "cuda:0"
+    },
+    "82_conv_depthwise_2D_square_input_square_kernel.py": {
+      "mean": 5.03,
+      "std": 0.316,
+      "min": 4.99,
+      "max": 8.17,
+      "num_trials": 100,
+      "hardware": "Tesla V100-SXM2-32GB",
+      "device": "cuda:0"
+    },
+    "86_conv_depthwise_separable_2D.py": {
+      "mean": 16.0,
+      "std": 0.527,
+      "min": 15.7,
+      "max": 21.1,
+      "num_trials": 100,
+      "hardware": "Tesla V100-SXM2-32GB",
+      "device": "cuda:0"
+    },
+    "93_masked_cumsum.py": {
+      "mean": 31.9,
+      "std": 0.832,
+      "min": 31.6,
+      "max": 39.5,
+      "num_trials": 100,
+      "hardware": "Tesla V100-SXM2-32GB",
+      "device": "cuda:0"
+    },
+    "97_ScaledDotProductAttention.py": {
+      "mean": 109.0,
+      "std": 0.844,
+      "min": 108.0,
+      "max": 117.0,
+      "num_trials": 100,
+      "hardware": "Tesla V100-SXM2-32GB",
+      "device": "cuda:0"
+    }
+  },
+  "level2": {
+    "1_Conv2D_ReLU_BiasAdd.py": {
+      "mean": 24.4,
+      "std": 0.25,
+      "min": 24.0,
+      "max": 25.2,
+      "num_trials": 100,
+      "hardware": "Tesla V100-SXM2-32GB",
+      "device": "cuda:0"
+    },
+    "12_Gemm_Multiply_LeakyReLU.py": {
+      "mean": 9.89,
+      "std": 0.0635,
+      "min": 9.71,
+      "max": 10.1,
+      "num_trials": 100,
+      "hardware": "Tesla V100-SXM2-32GB",
+      "device": "cuda:0"
+    },
+    "21_Conv2d_Add_Scale_Sigmoid_GroupNorm.py": {
+      "mean": 18.0,
+      "std": 0.122,
+      "min": 18.0,
+      "max": 19.2,
+      "num_trials": 100,
+      "hardware": "Tesla V100-SXM2-32GB",
+      "device": "cuda:0"
+    },
+    "22_Matmul_Scale_ResidualAdd_Clamp_LogSumExp_Mish.py": {
+      "mean": 10.2,
+      "std": 0.0773,
+      "min": 10.0,
+      "max": 10.5,
+      "num_trials": 100,
+      "hardware": "Tesla V100-SXM2-32GB",
+      "device": "cuda:0"
+    },
+    "40_Matmul_Scaling_ResidualAdd.py": {
+      "mean": 40.3,
+      "std": 0.267,
+      "min": 39.8,
+      "max": 41.0,
+      "num_trials": 100,
+      "hardware": "Tesla V100-SXM2-32GB",
+      "device": "cuda:0"
+    },
+    "45_Gemm_Sigmoid_LogSumExp.py": {
+      "mean": 29.9,
+      "std": 0.407,
+      "min": 29.0,
+      "max": 30.5,
+      "num_trials": 100,
+      "hardware": "Tesla V100-SXM2-32GB",
+      "device": "cuda:0"
+    },
+    "56_Matmul_Sigmoid_Sum.py": {
+      "mean": 20.1,
+      "std": 0.246,
+      "min": 19.6,
+      "max": 21.5,
+      "num_trials": 100,
+      "hardware": "Tesla V100-SXM2-32GB",
+      "device": "cuda:0"
+    },
+    "66_Matmul_Dropout_Softmax.py": {
+      "mean": 5.04,
+      "std": 0.227,
+      "min": 4.95,
+      "max": 5.96,
+      "num_trials": 100,
+      "hardware": "Tesla V100-SXM2-32GB",
+      "device": "cuda:0"
+    },
+    "88_Gemm_GroupNorm_Swish_Multiply_Swish.py": {
+      "mean": 10.6,
+      "std": 0.0701,
+      "min": 10.4,
+      "max": 10.7,
+      "num_trials": 100,
+      "hardware": "Tesla V100-SXM2-32GB",
+      "device": "cuda:0"
+    },
+    "99_Matmul_GELU_Softmax.py": {
+      "mean": 9.9,
+      "std": 0.047,
+      "min": 9.75,
+      "max": 10.1,
+      "num_trials": 100,
+      "hardware": "Tesla V100-SXM2-32GB",
+      "device": "cuda:0"
+    }
+  },
+  "level3": {
+    "1_MLP.py": {
+      "mean": 12.8,
+      "std": 0.367,
+      "min": 12.7,
+      "max": 14.8,
+      "num_trials": 100,
+      "hardware": "Tesla V100-SXM2-32GB",
+      "device": "cuda:0"
+    },
+    "28_VisionTransformer.py": {
+      "mean": 2.63,
+      "std": 0.00636,
+      "min": 2.62,
+      "max": 2.64,
+      "num_trials": 100,
+      "hardware": "Tesla V100-SXM2-32GB",
+      "device": "cuda:0"
+    },
+    "43_MinGPTCausalAttention.py": {
+      "mean": 43.8,
+      "std": 0.225,
+      "min": 43.3,
+      "max": 44.6,
+      "num_trials": 100,
+      "hardware": "Tesla V100-SXM2-32GB",
+      "device": "cuda:0"
+    },
+    "44_MiniGPTBlock.py": {
+      "mean": 107.0,
+      "std": 0.646,
+      "min": 105.0,
+      "max": 108.0,
+      "num_trials": 100,
+      "hardware": "Tesla V100-SXM2-32GB",
+      "device": "cuda:0"
+    },
+    "48_Mamba2ReturnY.py": {
+      "mean": 25.3,
+      "std": 0.216,
+      "min": 25.3,
+      "max": 27.4,
+      "num_trials": 100,
+      "hardware": "Tesla V100-SXM2-32GB",
+      "device": "cuda:0"
+    }
+  }
+}

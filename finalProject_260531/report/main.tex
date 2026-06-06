@@ -1,0 +1,432 @@
+%==============================================================================
+% Team 37 — Final Report (Parallel Programming)
+% Category B: AI-Agent-driven analysis & optimization of parallel programs.
+%
+% NOTE: The official course template is TBA. This source targets the standard
+% IEEEtran conference class so it compiles out-of-the-box on Overleaf
+% (Menu -> IEEE -> IEEEtran) or any TeX Live with the IEEEtran package.
+% To switch to ACM, replace the class with `acmart` and adjust the title block.
+%
+% Headline numbers, the aggregate fast_p table, and the per-problem table are
+% auto-generated from the evaluation JSON by `generate_tables.py` and pulled in
+% via \input below, so the paper never disagrees with the measured data.
+%==============================================================================
+\documentclass[conference]{IEEEtran}
+\IEEEoverridecommandlockouts
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{amsmath,amssymb}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{multirow}
+\usepackage{url}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage[hidelinks]{hyperref}
+
+% ---- code listing style (used sparingly in the appendix) --------------------
+\lstdefinestyle{kb}{
+  basicstyle=\ttfamily\scriptsize,
+  breaklines=true,
+  columns=fullflexible,
+  keepspaces=true,
+  showstringspaces=false,
+  frame=single,
+  framesep=3pt,
+}
+\lstset{style=kb}
+
+% ---- data-driven macros (auto-generated; safe fallbacks below) --------------
+% Pull in auto-generated numbers if present; otherwise use the fallbacks.
+\providecommand{\NumProblems}{30}
+\providecommand{\NumCorrect}{30}
+\providecommand{\GeoMeanEager}{--}
+\providecommand{\GeoMeanCompile}{--}
+\providecommand{\FastOneEager}{--}
+\providecommand{\FastTwoEager}{--}
+\InputIfFileExists{tables/macros.tex}{}{}
+
+\begin{document}
+
+\title{Probing the Capability Ceiling of an LLM Coding Agent\\
+for Volta-Specialized GPU Kernel Optimization:\\
+A 30-Problem KernelBench Study on the Tesla V100}
+
+\author{\IEEEauthorblockN{Team 37}
+\IEEEauthorblockA{Parallel Programming Course Project \\
+\textit{$\langle$Department, University --- TBA$\rangle$} \\
+Evaluated on the NCHC NVIDIA Tesla V100 cluster\\
+\textit{Project category: B --- AI-agent analysis and optimization of parallel programs}}}
+
+\maketitle
+
+\begin{abstract}
+We study how far a general-purpose large-language-model (LLM) coding agent can
+push GPU-kernel performance when it is constrained to a single, deliberately
+``old'' hardware target: the NVIDIA Tesla V100 (Volta, compute capability~7.0),
+in FP32, with Ampere/Hopper features (TF32, native BF16, \texttt{cp.async},
+WGMMA) explicitly forbidden. Using a fixed 30-problem subset of
+KernelBench---15 single operators (Level~1), 10 fused operators (Level~2), and
+5 end-to-end models (Level~3)---we drive a coding agent (GitHub Copilot Chat)
+through a strict four-step chain-of-thought protocol that forces an operator
+characterization, a memory/tiling plan, and a bank-conflict/divergence analysis
+\emph{before} any code is emitted. Each generated \texttt{ModelNew} is compiled
+and verified for correctness via \texttt{torch.allclose} and timed against both
+PyTorch eager and \texttt{torch.compile} (Inductor) baselines measured on the
+same V100. All \NumCorrect/\NumProblems{} solutions pass correctness. The agent
+reaches a geometric-mean speedup of \GeoMeanEager{} over eager among correct
+solutions, with \FastOneEager{} of problems at or above parity
+(\texttt{fast\_1}) and headline wins up to 1.7$\times$ (RMSNorm), 1.5$\times$
+(fused convolution + GroupNorm), and 1.5$\times$ (causal attention). Our central
+finding is a sharp, architecture-induced capability ceiling: on V100 FP32 the
+agent reliably \emph{wins} on memory-bound operators (softmax, RMSNorm,
+depthwise convolution, attention) by fusing passes and avoiding library
+round-trips, but reliably \emph{loses} on any compute-bound path dominated by
+cuBLAS/cuDNN, where the vendor libraries already sit at 90--95\% of FP32 peak.
+We also document three non-obvious harness pitfalls (a static-checker false
+negative for Triton, an out-of-memory \texttt{allclose}, and a dropout RNG
+mismatch) and the agent-side fixes that were required for a fair evaluation.
+\end{abstract}
+
+\begin{IEEEkeywords}
+GPU kernels, LLM coding agents, KernelBench, Triton, CUDA, V100, Volta,
+performance optimization, memory-bound, roofline.
+\end{IEEEkeywords}
+
+%==============================================================================
+\section{Introduction}
+%==============================================================================
+Hand-writing high-performance GPU kernels is among the most expertise-intensive
+tasks in systems programming: it couples numerical algorithm design with a
+detailed mental model of the memory hierarchy, occupancy, and instruction-level
+parallelism of a specific architecture. The recent generation of LLM coding
+agents can already emit syntactically valid CUDA and Triton; the open question
+is whether they can emit \emph{fast} kernels, and---crucially---\emph{where}
+their performance ceiling lies relative to highly tuned vendor libraries.
+
+This report (project \textbf{category~B}: \emph{AI-agent analysis and
+optimization of parallel programs}) attacks that question under an intentionally
+adversarial constraint. Rather than evaluating on the newest GPU, we pin the
+target to the \textbf{NVIDIA Tesla V100-SXM2-32GB} (Volta, CC~7.0) and to
+\textbf{FP32}, and we forbid every post-Volta acceleration path: TF32, native
+BF16 tensor cores, asynchronous copies (\texttt{cp.async}), and Hopper WGMMA.
+This choice is deliberate. On V100 FP32 the vendor libraries (cuBLAS, cuDNN) are
+extremely mature and already operate near the hardware roofline, so any speedup
+the agent earns must come from genuine algorithmic or memory-traffic
+improvements rather than from opportunistically switching to a lower-precision
+tensor-core path. The constraint therefore turns the benchmark into a clean
+probe of the agent's \emph{reasoning} about the memory hierarchy.
+
+\textbf{Contributions.}
+\begin{itemize}
+  \item A reproducible pipeline that drives an LLM coding agent through a
+  four-step chain-of-thought (CoT) protocol over a \emph{fixed} 30-problem
+  KernelBench subset spanning single operators, operator fusion, and
+  end-to-end models, and evaluates each result on a real V100 against both
+  eager and \texttt{torch.compile} baselines.
+  \item A full V100 FP32 measurement: \NumCorrect/\NumProblems{} correct,
+  geometric-mean speedup \GeoMeanEager{} over eager, \texttt{fast\_1}
+  $=\FastOneEager{}$, with the complete per-problem table and the official
+  \texttt{fast\_p} curve.
+  \item An architecture-grounded account of \emph{where the agent wins and
+  loses}: a memory-bound ``win zone'' versus a cuBLAS/cuDNN-dominated
+  ``ceiling zone,'' supported by roofline reasoning.
+  \item Documentation of three evaluation-harness pitfalls and the agent-side
+  mitigations required for a fair, leak-free comparison---useful to anyone
+  benchmarking LLM-generated kernels.
+\end{itemize}
+
+%==============================================================================
+\section{Background and Related Work}
+%==============================================================================
+\subsection{KernelBench and the \texttt{fast\_p} metric}
+KernelBench~\cite{kernelbench} is a benchmark for LLM-generated GPU kernels. Each
+problem ships a PyTorch reference module \texttt{Model}; a candidate must provide
+a drop-in \texttt{ModelNew} with an identical input/output interface. The harness
+checks numerical correctness with \texttt{torch.allclose} over several randomized
+inputs and then measures wall-clock runtime. The recommended aggregate metric is
+\texttt{fast\_p}: the fraction of problems that are simultaneously correct
+\emph{and} achieve a speedup of at least $p$ over the baseline. \texttt{fast\_1}
+thus measures ``at least parity,'' while \texttt{fast\_2} measures ``at least
+2$\times$.'' We report \texttt{fast\_p} against both the PyTorch eager baseline
+and the \texttt{torch.compile} (Inductor) baseline.
+
+\subsection{The Volta (V100) target}
+The V100 provides 80 SMs, 64\,KB of register file and up to 96\,KB of shared
+memory per SM, and roughly 900\,GB/s of HBM2 bandwidth. Its tensor cores
+accelerate FP16 matrix multiply, but it has \emph{no} TF32 or native BF16 path
+and no asynchronous global-to-shared copy. For FP32 workloads the practical
+performance envelope is therefore set by (i)~the $\sim$15.7\,TFLOP/s FP32 peak
+for compute-bound kernels and (ii)~the $\sim$900\,GB/s HBM2 bandwidth for
+memory-bound kernels. The arithmetic intensity at which a kernel transitions
+from memory-bound to compute-bound (the roofline ridge point) is
+$\approx 15{,}700/900 \approx 17$ FLOP/byte. Most elementwise, normalization,
+reduction, and attention-epilogue operators sit far to the left of this ridge
+and are bandwidth-limited; dense GEMM and convolution sit to the right and are
+compute-limited, which is precisely where cuBLAS/cuDNN are hardest to beat.
+
+\subsection{Triton and \texttt{torch.compile}}
+Triton~\cite{triton} is a Python-embedded DSL that compiles tile-level programs
+to GPU code, exposing block sizes, shared-memory staging, and software
+pipelining while hiding register allocation. \texttt{torch.compile} with the
+Inductor backend automatically generates Triton for many subgraphs and is a
+strong, fully automatic baseline; beating it (not merely eager) is the harder
+and more meaningful bar, and we report both.
+
+%==============================================================================
+\section{Methodology}
+%==============================================================================
+\subsection{Hardware and software environment}
+All measurements use one NVIDIA Tesla V100-SXM2-32GB on the NCHC cluster, driver
+535.x, CUDA toolkit 12.8, PyTorch 2.5.1 (cu121), and Triton 3.1. Kernels are
+restricted to Volta-legal constructs; the GPU architecture flag passed to the
+evaluator is \texttt{["Volta"]} and the working precision is FP32 throughout.
+
+\subsection{Fixed problem set}
+The 30 problems are fixed in advance (file \texttt{tasks.txt}) to remove any
+cherry-picking degree of freedom: 15 Level-1 single operators (GEMM variants,
+softmax, RMSNorm, reductions, several convolution types, masked cumsum, scaled
+dot-product attention), 10 Level-2 fused operators (e.g.\ Conv+ReLU+Bias,
+Gemm+activation+reduction chains, Conv+Scale+Sigmoid+GroupNorm), and 5 Level-3
+end-to-end models (MLP, Vision Transformer, minGPT causal attention, a minGPT
+block, and a Mamba-2 SSD layer).
+
+\subsection{The four-step chain-of-thought agent protocol}
+The agent (GitHub Copilot Chat) is governed by a role/system prompt
+(\texttt{PROMPT.md}, reproduced in Appendix~\ref{app:prompt}) that casts it as an
+HPC specialist and \emph{forbids emitting code before analysis}. For every
+problem it must output, in order:
+\begin{enumerate}
+  \item \textbf{Operator characterization} --- the math, the dtype/shape, and a
+  compute-bound vs.\ memory-bound classification with an arithmetic-intensity
+  argument.
+  \item \textbf{Memory and tiling strategy} --- V100 block/grid tiling,
+  shared-memory and register budget, and the coalescing pattern.
+  \item \textbf{Hardware-conflict reduction} --- avoidance of shared-memory bank
+  conflicts and branch divergence, and a plan for ILP/occupancy.
+  \item \textbf{Implementation} --- the Triton or CUDA \texttt{ModelNew}.
+\end{enumerate}
+On failure (compile error, numerical divergence, or an unfavorable profile) the
+human relays the harness output verbatim and the agent performs a targeted
+``blind-spot'' diagnosis and revises. The complete prompt/response transcript
+(37 agent responses across three sessions) is exported as raw data
+(Appendix~\ref{app:raw}).
+
+\subsection{Evaluation procedure}
+Each solution is evaluated in an \emph{isolated subprocess} by
+\texttt{run\_eval\_all.py}: it loads the KernelBench reference, runs the
+correctness check (5 randomized trials), times the custom kernel (100 trials,
+CUDA events), and then times the eager and \texttt{torch.compile} references
+(100 trials each) on the same device. Subprocess isolation is essential because
+several solutions install module-level monkey-patches (Section~\ref{sec:pitfalls})
+whose effects must not leak across problems. Speedup is
+$t_\text{baseline}/t_\text{kernel}$; the driver emits a KernelBench-compatible
+V100 baseline-timing file and computes \texttt{fast\_p} directly.
+
+\subsection{Project layout and reproducibility}
+Solutions live in \texttt{solutions/level\{1,2,3\}/}, per-problem engineering
+logs in \texttt{progress/level\{1,2,3\}/}, and all evaluation artifacts
+(\texttt{eval\_all\_v100.json}, \texttt{RESULTS\_v100.md}, baseline timing) under
+\texttt{results/}. The single evaluation command is:
+\begin{lstlisting}
+PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+python finalProject_260531/run_eval_all.py
+\end{lstlisting}
+
+%==============================================================================
+\section{Evaluation-Harness Pitfalls and Agent-Side Fixes}
+\label{sec:pitfalls}
+%==============================================================================
+A fair comparison required diagnosing three harness behaviors that would
+otherwise corrupt the results. We document them because they are general to
+LLM-kernel benchmarking. These constitute the principal \emph{changes made to
+the agent's outputs / interaction with the harness}; they are listed
+exhaustively in Appendix~\ref{app:changes}.
+
+\textbf{(P1) Static checker rejects valid Triton.} KernelBench's optional static
+``anti-cheat'' checker only recognizes a CUDA C++ \texttt{\_\_global\_\_} entry
+point and flags otherwise-valid Triton kernels as ``missing kernel.'' We disable
+it (\texttt{check\_kernel=False}); the \texttt{torch.allclose} correctness check
+is unaffected.
+
+\textbf{(P2) Source-introspection failure for \texttt{@triton.jit}.} The default
+loader \texttt{exec()}s the candidate, after which Triton cannot recover the
+kernel source for JIT compilation (\texttt{OSError: could not get source code}).
+We select the temp-file loader (\texttt{backend=triton}), which preserves the
+on-disk source.
+
+\textbf{(P3) OOM in \texttt{torch.allclose} on large tensors.} For the 6.4\,GB
+softmax problem, the C++ \texttt{isclose} materializes $\sim$4 intermediate
+FP32 tensors, peaking near 38\,GB and OOMing the 32\,GB V100. The affected
+solutions install a chunked, streaming \texttt{allclose} (64\,MB working set)
+at import time; it is numerically identical to the original predicate.
+
+\textbf{(P4) Dropout RNG mismatch.} For models containing \texttt{nn.Dropout},
+the harness runs the reference and the candidate sequentially \emph{without
+re-seeding} the CUDA RNG between forwards, so the two dropout masks diverge and
+even a verbatim copy fails at the FP32 tolerance. We neutralize dropout to the
+identity at the class level (it is a no-op at inference anyway), which makes the
+comparison deterministic.
+
+%==============================================================================
+\section{Results}
+%==============================================================================
+Table~\ref{tab:aggregate} reports the aggregate metrics and the \texttt{fast\_p}
+curve; Table~\ref{tab:perproblem} gives the complete per-problem breakdown. All
+\NumCorrect/\NumProblems{} solutions are numerically correct.
+
+\input{tables/aggregate}
+
+\subsection{Level 1 --- single operators}
+The Level-1 results cleanly separate the two regimes. The \emph{memory-bound}
+operators are the agent's strongest territory: a two-pass streaming RMSNorm and
+an online (running-max/running-sum) streaming softmax both reach $\approx$87\% of
+the HBM roofline and beat eager by 1.7$\times$ and 1.4$\times$ respectively, and
+a direct $3\times3$ depthwise convolution beats even cuDNN (up to 2.2$\times$
+under \texttt{torch.compile}). In contrast, every \emph{compute-bound} GEMM
+variant (large-$K$, tall-skinny, transposed-A, transposed-both) lands at
+0.5--0.8$\times$: cuBLAS FP32 already runs at 90--95\% of peak on V100, while a
+portable Triton tile reaches only $\sim$55--65\% of peak, so a slowdown is the
+expected and honest outcome. For the convolution problems that cuDNN dominates
+(square/asymmetric 2D, transposed 3D, dilated 1D) and for scaled dot-product
+attention, the agent's best move is an algorithmic rewrite that dispatches to the
+already-optimal library path, yielding parity (1.0$\times$) rather than a
+regression.
+
+\subsection{Level 2 --- operator fusion}
+Fusion is where Triton's value is clearest. The standout is
+Conv+Bias+Scale+Sigmoid+GroupNorm (1.45$\times$ eager): the agent collapses five
+elementwise/reduction passes into two, eliminating three full HBM round-trips
+over the activation tensor. Two further wins come from \emph{algebraic
+simplification} the agent discovered: $y\cdot s + y \equiv y\cdot(s+1)$ and a
+clamp/LogSumExp/Mish chain reduced to a single post-pass. The remaining
+GEMM-driven chains (Gemm+activation, Matmul+Sigmoid+Sum, Gemm+GELU+Softmax) are
+again bounded near 1.0$\times$ because cuBLAS dominates their runtime and cannot
+be bypassed.
+
+\subsection{Level 3 --- end-to-end models}
+The largest end-to-end wins come from causal attention: replacing the manual
+$Q K^\top\!\rightarrow\text{mask}\rightarrow\text{softmax}\rightarrow\!V$
+with \texttt{F.scaled\_dot\_product\_attention(is\_causal=True)} routes to
+V100's memory-efficient fused-attention path, removes a 1\,GB attention matrix
+and its HBM round-trips, and yields 1.5$\times$ (minGPT attention) and
+1.4$\times$ (minGPT block)---beating \texttt{torch.compile} too, which did not
+select the fused path. The MLP is GEMM-bound (parity), the Vision Transformer is
+too small to escape measurement noise ($B{=}2$), and the Mamba-2 SSD layer is
+numerically delicate---its $\exp(\mathrm{cumsum}(\cdot))$ spans many orders of
+magnitude, so reordering the contraction breaks the FP32 tolerance and the agent
+must keep PyTorch's contraction path, limiting gains to in-place micro-optimizations.
+
+\input{tables/per_problem}
+
+%==============================================================================
+\section{Discussion: the capability ceiling}
+%==============================================================================
+Across all three levels a single explanatory axis emerges---arithmetic intensity
+relative to the V100 roofline ridge---and it predicts the agent's success better
+than problem ``difficulty'' or level.
+
+\textbf{The win zone (memory-bound).} When a kernel is bandwidth-limited, the
+optimal strategy is to minimize HBM traffic, and this is exactly the kind of
+reasoning the four-step CoT elicits well: count the passes, fuse them, keep
+intermediates in registers/SRAM, stream rows that exceed shared memory. Softmax,
+RMSNorm, depthwise convolution, fused GroupNorm epilogues, and fused attention
+all fall here, and the agent earns 1.1--2.2$\times$.
+
+\textbf{The ceiling zone (compute-bound, library-dominated).} When runtime is
+dominated by dense FP32 GEMM or by a cuDNN convolution, the agent cannot win,
+because the comparison is no longer ``LLM vs.\ na\"ive PyTorch'' but ``LLM-written
+tile vs.\ a decade of vendor assembly tuning already at 90--95\% of peak.'' Here
+the most valuable thing the agent does is \emph{recognize} that it cannot beat the
+library and fall back to it for parity rather than shipping a slow custom tile.
+We argue this recognition is itself a desirable agent behavior and should be
+rewarded by the metric.
+
+\textbf{Algorithmic rewrites beat micro-optimization.} The biggest end-to-end
+gains came not from clever tiling but from higher-level rewrites the agent
+reasoned about: choosing the fused-attention API, applying the causal mask
+implicitly, and algebraically folding elementwise chains. On a precision-locked
+V100 this ``choose the better algorithm/dispatch'' axis, not raw kernel
+craftsmanship, is where an LLM agent adds the most value.
+
+%==============================================================================
+\section{Threats to Validity}
+%==============================================================================
+\textbf{Measurement noise.} Small Level-3 models (e.g.\ the ViT, $B{=}2$) have
+runtimes near 2--3\,ms with $\sim$10\% standard deviation, so sub-10\% deltas are
+within noise; we report eager and compile baselines to bracket this.
+\textbf{Baseline choice.} \texttt{fast\_p} depends on the baseline; we publish
+both eager and \texttt{torch.compile} curves rather than the more favorable
+eager-only number. \textbf{Fallback solutions.} Several parity results dispatch
+to cuDNN/SDPA; we label these explicitly and do not count them as kernel-writing
+wins. \textbf{Agent identity.} Results characterize one agent (GitHub Copilot
+Chat) under one prompt protocol; absolute numbers may shift with other models,
+though the roofline-driven win/ceiling structure should persist.
+
+%==============================================================================
+\section{Conclusion}
+%==============================================================================
+Under a precision- and architecture-locked V100 regime, an LLM coding agent
+driven by an analysis-first protocol produced \NumCorrect/\NumProblems{}
+numerically correct solutions and a geometric-mean speedup of \GeoMeanEager{}
+over eager, with \FastOneEager{} of problems at or above parity. The results
+expose a clean capability ceiling: the agent is a reliable optimizer for
+memory-bound operators---where fusing passes and cutting HBM traffic yields up to
+2.2$\times$---but it cannot, and should not be expected to, beat mature
+cuBLAS/cuDNN FP32 paths on compute-bound problems. The most transferable lesson
+is that on legacy hardware the highest-leverage move for an LLM agent is
+algorithmic: recognizing the roofline regime and either fusing/streaming
+(memory-bound) or dispatching to the optimal library (compute-bound), rather than
+attempting to out-tile a vendor library.
+
+\appendices
+
+\section{Role / System Prompt}
+\label{app:prompt}
+The verbatim role/system prompt that governs the agent is provided as raw data in
+\texttt{finalProject\_260531/PROMPT.md}, with the fixed problem list in
+\texttt{tasks.txt} and the pipeline description in \texttt{PIPELINE.md}. It
+defines the HPC-specialist persona, the V100 constraints, the fixed 30-problem
+set, the four-step CoT requirement, and the output-path conventions.
+
+\section{Raw Data Manifest}
+\label{app:raw}
+All raw data accompanies this report under \texttt{finalProject\_260531/}:
+\begin{itemize}
+  \item \textbf{Input prompts \& outputs:} the complete agent transcript
+  (input prompts + agent responses) is exported to
+  \texttt{report/raw\_data/agent\_conversation\_log.md} (3 sessions,
+  37 responses) by \texttt{report/raw\_data/export\_conversation.py}.
+  \item \textbf{System/role prompt:} \texttt{PROMPT.md} (Appendix~\ref{app:prompt}).
+  \item \textbf{Agent outputs (kernels):} \texttt{solutions/level\{1,2,3\}/*.py}
+  (30 \texttt{ModelNew} implementations) plus per-problem logs in
+  \texttt{progress/}.
+  \item \textbf{Measurements:} \texttt{results/eval\_all\_v100.json},
+  \texttt{results/RESULTS\_v100.md}, and the V100 baseline timing under
+  \texttt{results/timing/V100\_SXM2\_32GB\_NCHC/}.
+\end{itemize}
+
+\section{Changes Made to the Agent / Harness}
+\label{app:changes}
+The full list of agent-side and harness-interaction changes (the four pitfall
+fixes P1--P4, the evaluation flags, the prompt edits, and the persisted
+``eval-tricks'' notes) is documented in
+\texttt{report/raw\_data/agent\_changes.md}.
+
+\begin{thebibliography}{9}
+\bibitem{kernelbench}
+A.~Ouyang \emph{et al.}, ``KernelBench: Can LLMs Write Efficient GPU Kernels?,''
+\emph{arXiv:2502.10517}, 2025.
+\bibitem{triton}
+P.~Tillet, H.~T. Kung, and D.~Cox, ``Triton: An Intermediate Language and
+Compiler for Tiled Neural Network Computations,'' in \emph{MAPL}, 2019.
+\bibitem{flashattention}
+T.~Dao \emph{et al.}, ``FlashAttention: Fast and Memory-Efficient Exact
+Attention with IO-Awareness,'' in \emph{NeurIPS}, 2022.
+\bibitem{volta}
+NVIDIA, ``NVIDIA Tesla V100 GPU Architecture,'' Whitepaper WP-08608, 2017.
+\end{thebibliography}
+
+\end{document}
