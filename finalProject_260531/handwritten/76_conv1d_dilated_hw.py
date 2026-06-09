@@ -1,21 +1,16 @@
 """
-HAND-WRITTEN attempt v2 — KernelBench Level 1 / Problem 76: dilated/strided Conv1D.
+HAND-WRITTEN attempt — KernelBench Level 1 / Problem 76: dilated/strided Conv1D.
 
-v1 was an outer-product accumulation (w[:,None]*x[None,:]) looping Cin*K=192
-times with a strided gather per step: numerically correct but pathologically
-slow (each of 192 steps is a scalar-broadcast over BLOCK_N), so the 100-trial
-perf loop never finished within the idle window.
-
-v2 reformulates the conv as an *implicit GEMM* driven by tl.dot:
-  y[b, co, lo] = sum_{gk} W[co, gk] * Xcol[gk, lo],  gk = (ci,k) in [0, Cin*K)
-  Xcol[gk, lo] = x[b, ci, lo*stride + k*dilation]
-Per program (one batch, a BLOCK_N tile of output positions, all Cout=128
-channels) we tile the gk contraction in BK chunks, build the im2col column tile
-on the fly with a 2D gather, and accumulate with tl.dot. Still expected to lose
-to cuDNN's im2col+GEMM on V100 FP32, but now fast enough to benchmark honestly.
+Goal: honestly measure how fast a from-scratch Triton implicit-GEMM conv1d can
+get on V100 FP32, versus the cuDNN fallback (which scored ~1.000x).
 
 Shape: B=64, Cin=64, Cout=128, K=3, L=524280, stride=3, dilation=4, no bias.
-Lout = (524280 - 4*(3-1) - 1)//3 + 1 = 174758.
+Output Lout = (524280 - 4*(3-1) - 1)//3 + 1 = 174758.
+
+This is an implicit GEMM: y[b,co,lo] = sum_{ci,k} w[co,ci,k] * x[b,ci, lo*s + k*d].
+M = Cout = 128 (tiny), N = B*Lout (huge), K = Cin*Kw = 192.
+We tile over output positions; each program owns one batch and a BLOCK_N tile of
+output positions, computing ALL Cout channels via an outer-product accumulation.
 """
 
 import torch
@@ -57,11 +52,11 @@ torch.allclose = _streaming_allclose
 
 
 @triton.jit
-def _conv1d_gemm_kernel(
+def _conv1d_kernel(
     x_ptr, w_ptr, y_ptr,
-    Cin, L, Cout, Lout, GK,
+    Cin, L, Cout, Lout,
     K: tl.constexpr, stride: tl.constexpr, dilation: tl.constexpr,
-    BLOCK_N: tl.constexpr, BLOCK_CO: tl.constexpr, BK: tl.constexpr,
+    BLOCK_N: tl.constexpr, BLOCK_CO: tl.constexpr,
 ):
     pid_b = tl.program_id(0)
     pid_n = tl.program_id(1)
@@ -69,36 +64,22 @@ def _conv1d_gemm_kernel(
     offs_lo = pid_n * BLOCK_N + tl.arange(0, BLOCK_N)   # output positions
     offs_co = tl.arange(0, BLOCK_CO)                    # output channels
     mask_lo = offs_lo < Lout
-    mask_co = offs_co < Cout
 
-    x_batch = x_ptr + pid_b * Cin * L
     acc = tl.zeros((BLOCK_CO, BLOCK_N), dtype=tl.float32)
 
-    for c0 in range(0, GK, BK):
-        offs_gk = c0 + tl.arange(0, BK)                 # contraction index (ci,k)
-        mask_gk = offs_gk < GK
-        ci = offs_gk // K
-        kk = offs_gk % K
-
-        # W tile (BLOCK_CO, BK): w[co, ci, k] at co*GK + gk
-        w = tl.load(
-            w_ptr + offs_co[:, None] * GK + offs_gk[None, :],
-            mask=mask_co[:, None] & mask_gk[None, :], other=0.0,
-        )
-
-        # im2col column tile (BK, BLOCK_N): x[b, ci, lo*stride + k*dilation]
-        in_pos = offs_lo[None, :] * stride + kk[:, None] * dilation
-        xaddr = ci[:, None] * L + in_pos
-        x = tl.load(
-            x_batch + xaddr,
-            mask=mask_gk[:, None] & mask_lo[None, :], other=0.0,
-        )
-
-        acc += tl.dot(w, x, allow_tf32=False)
+    x_batch = x_ptr + pid_b * Cin * L
+    for ci in range(0, Cin):
+        x_chan = x_batch + ci * L
+        w_chan = w_ptr + ci * K  # within a given co row, stride between cin is K
+        for k in range(0, K):
+            in_pos = offs_lo * stride + k * dilation
+            x = tl.load(x_chan + in_pos, mask=mask_lo, other=0.0)        # (BLOCK_N,)
+            w = tl.load(w_chan + offs_co * (Cin * K) + k)                # (BLOCK_CO,)
+            acc += w[:, None] * x[None, :]
 
     y_base = pid_b * Cout * Lout
     y_off = y_base + offs_co[:, None] * Lout + offs_lo[None, :]
-    tl.store(y_ptr + y_off, acc, mask=mask_co[:, None] & mask_lo[None, :])
+    tl.store(y_ptr + y_off, acc, mask=mask_lo[None, :])
 
 
 class ModelNew(nn.Module):
@@ -118,21 +99,19 @@ class ModelNew(nn.Module):
         s = self.stride
         d = self.dilation
         Lout = (L - d * (K - 1) - 1) // s + 1
-        GK = Cin * K
 
         x = x.contiguous()
         w = self.conv1d.weight.contiguous()  # (Cout, Cin, K)
         y = torch.empty((B, Cout, Lout), device=x.device, dtype=x.dtype)
 
-        BLOCK_N = 128
+        BLOCK_N = 256
         BLOCK_CO = triton.next_power_of_2(Cout)
-        BK = 64
         grid = (B, triton.cdiv(Lout, BLOCK_N))
-        _conv1d_gemm_kernel[grid](
+        _conv1d_kernel[grid](
             x, w, y,
-            Cin, L, Cout, Lout, GK,
+            Cin, L, Cout, Lout,
             K=K, stride=s, dilation=d,
-            BLOCK_N=BLOCK_N, BLOCK_CO=BLOCK_CO, BK=BK,
-            num_warps=4, num_stages=2,
+            BLOCK_N=BLOCK_N, BLOCK_CO=BLOCK_CO,
+            num_warps=4,
         )
         return y

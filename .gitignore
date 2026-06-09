@@ -13,3 +13,15 @@ cache/*
 _build_cache/
 uv.lock
 CLAUDE.md
+
+# --- finalProject_260531: logs & intermediate run artifacts ---
+*.log
+*.bak
+# raw per-problem worker output (final results live in results/eval_all_v100.json)
+finalProject_260531/_worker_out/
+# throwaway dev/run helper scripts
+finalProject_260531/_reeval_five.py
+finalProject_260531/_run5_isolated.sh
+finalProject_260531/_run_p76_p97.sh
+# original fallback solutions kept only for local rollback (git history already has them)
+finalProject_260531/solutions/level1/_fallback_backup/

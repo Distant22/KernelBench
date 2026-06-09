@@ -62,6 +62,9 @@ finalProject_260531/
 │   │   └── 06_matmul_large_k.py
 │   ├── level2/
 │   └── level3/
+├── handwritten/         # ✅ 對 5 題原本 fallback 題目的「誠實手寫 (no-fallback)」嘗試與量測
+│   ├── RESULTS_handwritten.md   # 誠實結果總表 (即使必輸也照實紀錄)
+│   └── run_handwritten_eval.sh  # 逐題評估 driver
 └── progress/            # ✅ 每題的實驗紀錄 (baseline / 迭代 / speedup / TODO)
     ├── level1/
     │   └── 06_matmul_large_k.md
@@ -71,6 +74,7 @@ finalProject_260531/
 
 - **`solutions/`**：Agent 產出的 30 份 kernel 程式碼，檔名格式 `<NN>_<short_name>.py` (NN = KernelBench 題號)。
 - **`progress/`**：Agent 每跑完一次 `run_and_check.py` 後在這裡更新對應 `<NN>_<short_name>.md`，記錄 baseline / runtime / speedup / 迭代版本 / 後續優化方向。
+- **`handwritten/`**：對 Level-1 中原本以 cuDNN/SDPA fallback 取得 1.0× 的 5 題（P50/56/61/76/97），另外**強制手寫 from-scratch kernel 並如實量測**。結果誠實紀錄於 `RESULTS_handwritten.md`：P50 0.08×、P56 0.26×、P61 0.40×（皆 correct，決定性落後 cuDNN）；P76 因登入節點 20GB cgroup 上限無法評估；P97 手寫 flash-attn 在 Triton 3.1 無法編譯。**政策：即使必輸也誠實量測並紀錄，不以無聲 fallback 掩蓋。**
 - 任何接手的 AI Agent 都應 **先翻 `progress/` 目錄判斷哪些題目已完成**，再從 `tasks.txt` 中找下一題未完成的進入。
 
 ## 5. 單題評估指令模板

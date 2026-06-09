@@ -63,8 +63,14 @@
 # Core Metrics & Target Optimization Flags
 我們的自動化環境會針對你生成的程式碼進行編譯、執行，並回傳以下指標。你的終極目標是持續優化這些指標：
 1. 正確性 (Correctness)：必須通過 torch.allclose() 驗證，最大絕對誤差不能超過指定容差。
-2. 加速比 (Speedup Factor)：（PyTorch Baseline 時間 / 你的 Kernel 時間）。必須大於 1.0x，目標是追求數倍的極致效能領先。
+2. 加速比 (Speedup Factor)：（PyTorch Baseline 時間 / 你的 Kernel 時間）。目標是追求數倍的極致效能領先。
 3. 記憶體頻寬利用率 (Memory Bandwidth Utilization, % HBM)：針對 Memory-bound 算子，需極大化頻寬吞吐。
+
+# Honest Attempt Policy（禁止無聲 fallback）
+本專題的目的是「誠實量測 LLM agent 手寫 kernel 與現有函式庫競賽的真實結果」，**即使必輸也要嘗試**：
+1. **每一題都必須先嘗試 from-scratch kernel**（Triton / CUDA），不得因為「判定打不贏 cuBLAS/cuDNN/SDPA」就直接 dispatch 回函式庫而不寫。
+2. 允許把函式庫呼叫當成「官方解 (parity baseline)」提交，但**前提是同時提供一份誠實量測的手寫 kernel 結果**，並如實記錄其 speedup（即使 < 1.0×）、correctness、或編譯/記憶體失敗原因。手寫嘗試與量測放在 `finalProject_260531/handwritten/`（見 `RESULTS_handwritten.md`）。
+3. **嚴禁**為了讓數字好看而以無聲 fallback 取代手寫 kernel。輸給函式庫是合法且有價值的結果，必須照實記錄，不得隱藏。
 
 # Dynamic Feedback & Failure Modes
 在後續的對話中，我會將「編譯器報錯（Compilation Errors）」、｢數值偏差（Numerical Divergence）」或「Profiler 效能帶寬數據」轉為文字反饋給你。

@@ -30,14 +30,25 @@ python scripts/run_and_check.py \
 | 5 | level1/23 Softmax | [23_softmax.py](../solutions/level1/23_softmax.py) | [23_softmax.md](level1/23_softmax.md) | ✅ | **1.40×** / 1.35× | 🎉 online streaming softmax；6.4 GB；87% roofline |
 | 6 | level1/36 RMSNorm | [36_rmsnorm.py](../solutions/level1/36_rmsnorm.py) | [36_rmsnorm.md](level1/36_rmsnorm.md) | ✅ | **1.69×** / 1.07× | 🎉 87% roofline，2-pass streaming RMSNorm |
 | 7 | level1/47 Sum reduction | [47_sum_reduce.py](../solutions/level1/47_sum_reduce.py) | — | ✅ | 0.89× / 1.02× | PyTorch cub reduction 已 ~78% peak，Triton 難超越 |
-| 8 | level1/50 Conv2D AlexNet | [50_conv2d_alexnet.py](../solutions/level1/50_conv2d_alexnet.py) | — | ✅ | 0.98× / 1.00× | **cuDNN fallback** — 11×11 stride=4 |
-| 9 | level1/56 Conv2D 非對稱 | [56_conv2d_asymmetric.py](../solutions/level1/56_conv2d_asymmetric.py) | — | ✅ | 1.00× / **1.98×** | **cuDNN fallback** — torch.compile 路徑反而較慢 |
-| 10 | level1/61 ConvTranspose3D | [61_conv_transposed_3d.py](../solutions/level1/61_conv_transposed_3d.py) | — | ✅ | 1.00× / 1.00× | **cuDNN fallback** |
-| 11 | level1/76 Conv1D dilated | [76_conv1d_dilated.py](../solutions/level1/76_conv1d_dilated.py) | — | ✅ | 1.00× / 1.00× | **cuDNN fallback**；8.4 GB 需 streaming allclose |
+| 8 | level1/50 Conv2D AlexNet | [50_conv2d_alexnet.py](../solutions/level1/50_conv2d_alexnet.py) | — | ✅ | 0.98× / 1.00× | **cuDNN fallback**（官方解）；誠實手寫 implicit-GEMM → **0.08×** (correct)，見 [handwritten](../../handwritten/RESULTS_handwritten.md) |
+| 9 | level1/56 Conv2D 非對稱 | [56_conv2d_asymmetric.py](../solutions/level1/56_conv2d_asymmetric.py) | — | ✅ | 1.00× / **1.98×** | **cuDNN fallback**（官方解）；誠實手寫 → **0.26×** (correct)，見 [handwritten](../../handwritten/RESULTS_handwritten.md) |
+| 10 | level1/61 ConvTranspose3D | [61_conv_transposed_3d.py](../solutions/level1/61_conv_transposed_3d.py) | — | ✅ | 1.00× / 1.00× | **cuDNN fallback**（官方解）；誠實手寫 → **0.40×** (correct)，見 [handwritten](../../handwritten/RESULTS_handwritten.md) |
+| 11 | level1/76 Conv1D dilated | [76_conv1d_dilated.py](../solutions/level1/76_conv1d_dilated.py) | — | ✅ | 1.00× / 1.00× | **cuDNN fallback**（官方解）；誠實手寫**無法評估**（20GB cgroup OOM），見 [handwritten](../../handwritten/RESULTS_handwritten.md) |
 | 12 | level1/82 Depthwise Conv2D | [82_depthwise_conv2d.py](../solutions/level1/82_depthwise_conv2d.py) | [82_depthwise_conv2d.md](level1/82_depthwise_conv2d.md) | ✅ | **1.31×** / **2.22×** | 🎉 贏 cuDNN！3×3 直接卷積，BLOCK 4×512 |
 | 13 | level1/86 Depthwise-Sep Conv2D | [86_depthwise_separable_conv2d.py](../solutions/level1/86_depthwise_separable_conv2d.py) | [86_depthwise_separable_conv2d.md](level1/86_depthwise_separable_conv2d.md) | ✅ | **1.12×** / **1.17×** | Triton depthwise + cuBLAS pointwise |
 | 14 | level1/93 Masked Cumsum | [93_masked_cumsum.py](../solutions/level1/93_masked_cumsum.py) | — | ✅ | 1.00× / 0.51× | fused mask × cumsum，單 block scan；8 GB |
-| 15 | level1/97 SDPA | [97_sdpa.py](../solutions/level1/97_sdpa.py) | — | ✅ | 1.00× / 1.00× | **SDPA fallback**（PyTorch 已 fused attention） |
+| 15 | level1/97 SDPA | [97_sdpa.py](../solutions/level1/97_sdpa.py) | — | ✅ | 1.00× / 1.00× | **SDPA fallback**（官方解）；誠實手寫 flash-attn **無法編譯**（Triton 3.1），見 [handwritten](../../handwritten/RESULTS_handwritten.md) |
+
+## 誠實手寫嘗試（no-fallback，記錄輸贏）
+> 這 5 題官方解採函式庫 dispatch 取得 1.0×。為誠實量測能力天花板，我們另外**強制手寫 from-scratch kernel** 並如實記錄結果（即使必輸）。完整紀錄見 [../../handwritten/RESULTS_handwritten.md](../../handwritten/RESULTS_handwritten.md)。
+
+| PID | 手寫 kernel | Correct | Speedup (eager) | 結論 |
+|-----|------------|---------|-----------------|------|
+| 50 | Triton implicit GEMM | ✅ | **0.08×** | 決定性落後 cuDNN |
+| 56 | Triton implicit GEMM | ✅ | **0.26×** | 決定性落後 cuDNN |
+| 61 | Triton gather GEMM | ✅ | **0.40×** | 決定性落後 cuDNN |
+| 76 | Triton implicit GEMM | — | 無法評估 | 登入節點 20GB cgroup 上限，host 端建構 input(8.6GB)+output(5.7GB) 即 OOM |
+| 97 | Triton flash-attention | ❌(編譯失敗) | — | Triton 3.1 不支援 `tl.static_range` 內以 Python list 累積 register |
 
 ## 統計
 - **15 / 15 通過 correctness**
@@ -48,7 +59,7 @@ python scripts/run_and_check.py \
 ## 已知共通結論
 - **GEMM 系列 (task 1–4)**：V100 FP32 cuBLAS 已 90–95% peak，純 Triton ~55–65% peak，<1.0× 是預期。
 - **Memory-bound op (task 5 Softmax / 6 RMSNorm / 12 Depthwise / 13 Depth-sep)**：避開 cuBLAS / cuDNN 後，Triton 容易超越 PyTorch eager / compile。**這是 >1.0× 的主戰場。**
-- **cuDNN 主導 conv 類 (task 8、9、10、11)**：Triton naive direct conv 在 V100 FP32 上難敵 cuDNN 的 im2col + GEMM；採 PyTorch fallback 取得 1.0× 並紀錄為「cuDNN dominated」。
+- **cuDNN 主導 conv 類 (task 8、9、10、11)**：Triton naive direct conv 在 V100 FP32 上難敵 cuDNN 的 im2col + GEMM；官方解採 PyTorch fallback 取得 1.0×。**另外誠實手寫 implicit-GEMM 並如實量測**，結果決定性落後（P50 0.08× / P56 0.26× / P61 0.40×，皆 correct；P76 因 20GB cgroup 無法評估；P97 手寫 flash-attn 在 Triton 3.1 無法編譯）——我們選擇誠實記錄每一次與函式庫競賽的輸贏，而非以無聲 fallback 掩蓋。完整紀錄見 [../../handwritten/RESULTS_handwritten.md](../../handwritten/RESULTS_handwritten.md)。
 - **大 tensor (>4 GB) eval 注意事項**：KernelBench 的 torch.allclose 在 ~6 GB tensor 上會配置多份中介 buffer 觸發 V100 OOM；解法是在 solution 模組頂層 monkey-patch torch.allclose 為 chunked streaming 版本。
 
 ## 下一步

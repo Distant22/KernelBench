@@ -15,14 +15,14 @@ Lv & PID & Operator & Technique & Correct & Kernel (ms) & Eager (ms) & Sp.\ eage
 1 & 23 & Softmax (wide row) & streaming online softmax & \checkmark & 24.700 & 34.700 & \textbf{1.40$\times$} & \textbf{1.35$\times$} \\
 1 & 36 & RMSNorm & 2-pass streaming & \checkmark & 28.700 & 48.400 & \textbf{1.69$\times$} & \textbf{1.06$\times$} \\
 1 & 47 & Sum reduction & cub-bound & \checkmark & 13.300 & 11.900 & 0.89$\times$ & \textbf{1.02$\times$} \\
-1 & 50 & Conv2D (11x11 s4) & cuDNN fallback & \checkmark & 7.840 & 7.830 & 1.00$\times$ & \textbf{1.01$\times$} \\
-1 & 56 & Conv2D (asymmetric) & cuDNN fallback & \checkmark & 21.600 & 21.500 & 1.00$\times$ & \textbf{1.98$\times$} \\
-1 & 61 & ConvTranspose3D & cuDNN fallback & \checkmark & 27.800 & 27.900 & \textbf{1.00$\times$} & \textbf{1.00$\times$} \\
-1 & 76 & Conv1D (dilated) & cuDNN fallback & \checkmark & 40.800 & 40.800 & \textbf{1.00$\times$} & \textbf{1.00$\times$} \\
+1 & 50 & Conv2D (11x11 s4) & Triton implicit GEMM & \checkmark & 158.000 & 7.840 & 0.05$\times$ & 0.05$\times$ \\
+1 & 56 & Conv2D (asymmetric) & Triton implicit GEMM & \checkmark & 82.200 & 49.300 & 0.60$\times$ & 0.52$\times$ \\
+1 & 61 & ConvTranspose3D & Triton gather GEMM & \checkmark & 77.400 & 27.800 & 0.36$\times$ & 0.57$\times$ \\
+1 & 76 & Conv1D (dilated) & Triton implicit GEMM & \checkmark & 514.000 & 40.800 & 0.08$\times$ & 0.08$\times$ \\
 1 & 82 & Depthwise Conv2D & Triton direct 3x3 (beats cuDNN) & \checkmark & 3.840 & 5.030 & \textbf{1.31$\times$} & \textbf{2.22$\times$} \\
 1 & 86 & Depthwise-sep Conv2D & Triton dw + cuBLAS pw & \checkmark & 14.200 & 16.000 & \textbf{1.13$\times$} & \textbf{1.17$\times$} \\
 1 & 93 & Masked cumsum & fused mask+scan & \checkmark & 32.100 & 31.900 & 0.99$\times$ & 0.50$\times$ \\
-1 & 97 & Scaled dot-prod attn & SDPA fallback & \checkmark & 109.000 & 109.000 & \textbf{1.00$\times$} & \textbf{1.00$\times$} \\
+1 & 97 & Scaled dot-prod attn & Triton flash-attn (D-tiled) & \checkmark & 1140.000 & 109.000 & 0.10$\times$ & 0.10$\times$ \\
 \midrule
 2 & 1 & Conv+ReLU+Bias & cuDNN + fused epilogue & \checkmark & 22.600 & 24.400 & \textbf{1.08$\times$} & \textbf{1.09$\times$} \\
 2 & 12 & Gemm+Mul+LeakyReLU & cuBLAS-bound & \checkmark & 9.800 & 9.890 & \textbf{1.01$\times$} & 0.97$\times$ \\

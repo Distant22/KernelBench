@@ -82,6 +82,8 @@ flowchart TD
 - `torch.allclose` 數值偏差
 - Profiler / Nsight 數據 (頻寬未達標、占用率過低等)
 
+> ⚠️ **執行環境陷阱（本次實驗紀錄）**：登入節點對每位使用者有 **20GB cgroup 記憶體上限**（非實體 RAM）。大 tensor 題目（如 P76 Conv1D dilated，host 端 input 8.6GB + output 5.7GB）在 `run_and_check.py` 於 host 建構輸入時即會觸發 cgroup OOM-killer，**連帶殺掉整個 user slice（含 ssh / tmux session）**。對策：(a) 用 **tmux** 跑評估避免 ssh 斷線連帶中斷；(b) **每題開獨立 subprocess** 逐一跑，避免一題 OOM 拖垮整批；(c) `systemd-run --user` 在此登入節點無 user D-Bus，無法用來做記憶體隔離。
+
 ## 9. 產出檔案規劃 (建議)
 ```
 finalProject_260531/
@@ -98,3 +100,8 @@ finalProject_260531/
 ---
 
 **Pipeline 簡介到此。Agent 已可直接從 `tasks.txt` 第 1 題 (`KernelBench/level1/6_Matmul_with_large_K_dimension_.py`) 開始動工。**
+
+
+```
+tmux session 是 hw_eval
+```
