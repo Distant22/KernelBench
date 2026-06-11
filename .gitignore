@@ -13,6 +13,11 @@ cache/*
 _build_cache/
 uv.lock
 CLAUDE.md
+.tools/
+.conda-envs/
+.conda-pkgs/
+.conda-cache/
+.compute-cache/
 
 # --- finalProject_260531: logs & intermediate run artifacts ---
 *.log
@@ -25,3 +30,10 @@ finalProject_260531/_run5_isolated.sh
 finalProject_260531/_run_p76_p97.sh
 # original fallback solutions kept only for local rollback (git history already has them)
 finalProject_260531/solutions/level1/_fallback_backup/
+# Native/heavy profiler artifacts; keep profile.json and feedback.md tracked.
+finalProject_260531/results/profiles/**/*.nsys-rep
+finalProject_260531/results/profiles/**/*.ncu-rep
+finalProject_260531/results/profiles/**/*.sqlite
+finalProject_260531/results/profiles/**/*.csv
+finalProject_260531/results/profiles/**/*_torch_profile.json
+finalProject_260531/results/profiles/slurm-*.out

@@ -1,6 +1,6 @@
 ## 平行程式期末報告
 
-> 相關文件：[PROMPT.md](PROMPT.md) (Agent 指令規範) ・ [pipeline.md](pipeline.md) (整體流程) ・ [tasks.txt](tasks.txt) (30 題清單)
+> 相關文件：[PROMPT.md](PROMPT.md) (Agent 指令規範) ・ [PIPELINE.md](PIPELINE.md) (整體流程) ・ [tasks.txt](tasks.txt) (30 題清單)
 
 ### 1. 在根目錄執行腳本
 ```
@@ -91,3 +91,22 @@ python scripts/run_and_check.py \
 - `check_kernel=False`：KernelBench 的靜態檢查器只認 CUDA C++ 的 `__global__`，會把合法的 Triton kernel 誤判成「Missing __global__ kernel definition」。`torch.allclose` 正確性驗證仍照跑。
 - `backend=triton`：讓 KernelBench 經 `load_custom_model_with_tempfile` 載入，避免 `@triton.jit` 因為 `exec()` 拿不到 source 而 `OSError: could not get source code`。
 - 若改寫成純 CUDA C++ (帶 `__global__` 與 `load_inline`)，可移除這兩個旗標。
+
+## 6. Nsight / Profiler 回饋
+
+GPU profiling 僅可透過 Slurm compute node 執行：
+
+```bash
+sbatch finalProject_260531/profile_feedback.sbatch doctor
+sbatch finalProject_260531/profile_feedback.sbatch profile \
+  --level 2 --problem-id 40 \
+  --solution finalProject_260531/solutions/level2/40_matmul_scale_residual.py \
+  --paths candidate,eager,compile --deep
+```
+
+結果位於 `results/profiles/L<level>_P<id>/<run-id>/profile.json` 與
+`feedback.md`。Slurm wrapper 會載入 cluster 的 NVIDIA HPC SDK module，以使用
+Nsight Systems、Nsight Compute 與 V100 hardware counters。若工具或 counter
+權限在其他環境不可用，pipeline 會明確記錄並 fallback 至 PyTorch Profiler。
+完整操作、artifact 解讀、counter diagnosis 規則與已知陷阱請見
+[PIPELINE.md](PIPELINE.md#9-nsight-guided-agent-feedback-pipeline)。
