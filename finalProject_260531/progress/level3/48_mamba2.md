@@ -24,3 +24,21 @@
 - Eager 端贏 1.05× 主要來自 in-place exp/mask 與 einops 開銷消除。
 - `torch.compile` (inductor) 把 4 個 einsum 重新規劃為更高效的 GEMM 序列，
   我們純 eager-style 無法及。屬「compile-only win」題型。
+
+## v3 (parameter-cache hoisting, WIN — 跨過 compile)
+- 關鍵洞見：A/B/C 為固定 parameter、只有 X 每次變動。不只 `exp/segsum/decay`
+  是 param-only，連 `cb_decay = C·B·L`（contract n 後 *L）與 `weighted_b = B·decay_states`
+  這兩個 **contraction 乘積也只依賴參數** → 全部預先算好快取 (`_build_parameter_cache`)，
+  forward 只剩真正依賴 X 的 contraction。
+- `cb_decay` 保留安全的 `contract n → *L` 分組（對照 reference bit-exact，max diff 0.0），
+  故 fp32 正確性不受影響（無 reduction reorder 爆誤差）。
+- 改動前備份：`_fallback_backup/48_mamba2.before_paramcache2.py`。
+- Eval (V100, --deep): ✅ 5/5, runtime **16.0 ms**, eager 25.3 ms, compile 16.5 ms
+- Speedup: **1.581× eager / 1.031× compile**（兩者皆 > 1.0×，WIN）
+
+## 評析 (v3)
+- 先前曾誤判「sc>1.0 在 fp32 不可能」——那只在「不外提 contraction 乘積」的前提成立。
+  把 C·B·L、B·decay 也外提到快取後，每次 forward 省掉 ~3.86 ms 的 param-only 計算，
+  直接從 sc 0.817（cache-only 中間版）→ **1.031**。
+- 教訓：在窮盡所有 param-only 中間值（含 contraction 乘積）的外提之前，禁止下「不可能」結論。
+- 注意：快取假設參數固定（inference）；訓練中若 A/B/C 變動需失效重算 `_parameter_cache`。

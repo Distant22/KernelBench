@@ -35,9 +35,25 @@ export TRITON_CACHE_DIR="${ROOT}/.compute-cache/triton"
 export TORCHINDUCTOR_CACHE_DIR="${ROOT}/.compute-cache/torchinductor"
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
-PYTHON="${ROOT}/.conda-envs/kernelbench/bin/python"
-if [[ ! -x "${PYTHON}" ]]; then
-  echo "Missing ${PYTHON}; create the repository-local environment first." >&2
+# Resolve the python interpreter. Prefer an explicit override, then the
+# repository-local environment, then a standard conda "kernelbench" env so the
+# wrapper works across both teammates' setups.
+PYTHON=""
+for candidate in \
+  "${KB_PYTHON:-}" \
+  "${ROOT}/.conda-envs/kernelbench/bin/python" \
+  "${HOME}/miniconda3/envs/kernelbench/bin/python" \
+  "${HOME}/anaconda3/envs/kernelbench/bin/python"; do
+  if [[ -n "${candidate}" && -x "${candidate}" ]]; then
+    PYTHON="${candidate}"
+    break
+  fi
+done
+if [[ -z "${PYTHON}" ]] && command -v conda >/dev/null 2>&1; then
+  PYTHON="$(conda run -n kernelbench bash -c 'command -v python' 2>/dev/null || true)"
+fi
+if [[ -z "${PYTHON}" || ! -x "${PYTHON}" ]]; then
+  echo "Could not locate a kernelbench python. Set KB_PYTHON=/path/to/python." >&2
   exit 1
 fi
 

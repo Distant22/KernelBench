@@ -124,6 +124,9 @@ class ModelNew(nn.Module):
         w = self.conv1d.weight.contiguous()  # (Cout, Cin, K)
         y = torch.empty((B, Cout, Lout), device=x.device, dtype=x.dtype)
 
+        # acc tile is [BLOCK_CO, BLOCK_N]; BLOCK_N=256 made it 128*256=32768
+        # floats/program (~128 regs/thread) -> heavy spill (ncu couldn't even
+        # capture it). BLOCK_N=128 -> acc 16384 (no spill) + better intensity.
         BLOCK_N = 128
         BLOCK_CO = triton.next_power_of_2(Cout)
         BK = 64
@@ -133,6 +136,6 @@ class ModelNew(nn.Module):
             Cin, L, Cout, Lout, GK,
             K=K, stride=s, dilation=d,
             BLOCK_N=BLOCK_N, BLOCK_CO=BLOCK_CO, BK=BK,
-            num_warps=4, num_stages=2,
+            num_warps=8, num_stages=2,
         )
         return y

@@ -53,3 +53,27 @@ python scripts/run_and_check.py \
     eval_mode=local gpu_arch='["Volta"]' \
     check_kernel=False backend=triton
 ```
+
+---
+
+## Profile-driven 調優 pass（補做）
+
+A(32768,32)@B(32,32768) → C(32768,32768)，4GB 輸出、store-bound。
+
+| 版本 | 設定 | kernel_ms | speedup_compile | 備註 |
+|---|---|---|---|---|
+| v1 | BLOCK_M=128, BLOCK_N=128, warps=4 | 7.83 | 0.812× | 255 regs spill，占用率 12.4% |
+| v2 | **BLOCK_M=64, BLOCK_N=128, warps=8** | 7.32 | **0.88×** | 88 regs、占用率 24.3%、dram 64%，**採用** |
+
+- **關鍵洞見**：輸出極大、K=32 極小 → 此題是 store-bound。縮小 BLOCK_M 到 64 並提高 warps=8
+  讓暫存器壓力從 255（spill）降到 88，占用率翻倍至 24.3%，更能掩蓋寫出 4GB 的延遲。
+- 最終 **0.812× → 0.88×**，已接近記憶體頻寬天花板（dram 64% 利用率）。
+
+### 第二輪掃描（2026-06-12，確認天花板）
+
+| 版本 | 設定 | kernel_ms | speedup_compile | 備註 |
+|---|---|---|---|---|
+| v3 | 同 v2 但移除靜態恆真 mask（M/N/K 皆整除 block）| 7.30 | 0.877× | 與 v2 持平、程式更乾淨，**採用** |
+| v4 | BLOCK_M=32, warps=4（衝占用率）| 7.75 | 0.826× | 占用率未升（仍 24%，88 regs），變慢，捨棄 |
+
+- **誠實結論**：`compile_ms = eager_ms = 6.4ms` → `torch.compile` 此題直接呼叫 cuBLAS 專用的 tall-skinny `volta_sgemm`。ncu 顯示 v3 sm__throughput 68–75%、占用率卡在 24%（88 regs，register-limited）。已掃過 tile / warps / mask / 占用率所有槓桿，純 Triton FP32 在 V100 上**無法超越 cuBLAS**。0.88× 為此 shape 的結構性天花板，誠實保留手寫 kernel。

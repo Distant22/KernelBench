@@ -1,5 +1,20 @@
 # Level 1 / Problem 56 — Conv2D 非對稱 input/kernel
 
+> **2026-06-12 — 手寫 Triton implicit-GEMM，0.58× (compile)。**
+> v1 BLOCK_M=64/N=128/warps4 → 114ms (0.38×)。Fix：BLOCK_M 64→128（Cout=128 一個 M-block，
+> gather 只做一次）+ BLOCK_N=128 + num_warps16。**74.8ms (0.58×)**，compute/mem 平衡 51/53%，occ 25%。
+> correct 5/5。
+>
+> **2026-06-12 重驗 — 落差來自 compile baseline 漂移，非 kernel 改動。** 重跑 deep profile：
+> kernel_ms=74.8ms（與先前完全一致，kernel 沒動）、eager=21.6ms、compile=43.1ms → **0.576× 完全重現**。
+> 但 full eval（JID 950583）那次測到 0.346×，反推 compile_ms≈25.9ms — 同一個非對稱 5×7 conv，
+> inductor/cuDNN 在不同次執行挑到不同 algo（26ms vs 43ms），導致 speedup_compile 在 0.35~0.58 間波動。
+> 結論：markdown 記錄正確，無未記錄改動；compile baseline 非固定值。
+
+---
+
+## （以下為原紀錄）
+
 **Shape**: x (8, 64, 512, 256) FP32 ≈ 32 MB；conv 5×7 → out (8, 128, 508, 250) ≈ 65 MB。**cuDNN-bound**。
 **Baseline**: PyTorch eager 21.5 ms, torch.compile 42.8 ms
 

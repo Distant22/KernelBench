@@ -1,5 +1,14 @@
 # Level 1 / Problem 76 — Conv1D dilated/strided
 
+> **2026-06-12 — 手寫 Triton implicit-GEMM，0.58× (compile)，本批最大提升 4.8×。**
+> v1 BLOCK_N=256 使 accumulator [BLOCK_CO,BLOCK_N]=[128,256]=32768 floats/program → 重度 register
+> spill（ncu 甚至抓不到），338ms (0.12×)。Fix：BLOCK_N 256→64→**128**（acc 16384 floats，不再 spill）。
+> **70.8ms (0.58×)**，correct。
+
+---
+
+## （以下為原紀錄）
+
 **Shape**: x (64, 64, 524280) FP32 ≈ **8.39 GB**；3-tap kernel stride=3 dilation=4 → out (64, 128, 174758) ≈ 5.36 GB。**Memory-bound but with strided gathers**。
 **Baseline**: PyTorch eager 40.9 ms, torch.compile 40.8 ms（cuDNN im2col + GEMM）
 

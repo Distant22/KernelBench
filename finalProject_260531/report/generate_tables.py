@@ -18,10 +18,10 @@ FAST_P = [1.0, 1.5, 2.0, 3.0]
 
 # Short human-friendly operator names + one-line technique notes (display only).
 NOTES = {
-    (1, 6):  ("Matmul (large K)",       "Triton split-K; cuBLAS-bound"),
-    (1, 9):  ("Tall-skinny matmul",     "Triton tile; cuBLAS-bound"),
-    (1, 16): ("Matmul $A^\\top B$",      "Triton tl.trans"),
-    (1, 18): ("Matmul $A^\\top B^\\top$", "Triton double trans"),
+    (1, 6):  ("Matmul (large K)",       "Triton split-K ($SK{=}20$); cuBLAS ceiling"),
+    (1, 9):  ("Tall-skinny matmul",     "Triton tile, mask-free; cuBLAS ceiling"),
+    (1, 16): ("Matmul $A^\\top B$",      "Triton single tl.trans"),
+    (1, 18): ("Matmul $A^\\top B^\\top$", "Reformulated $(BA)^\\top$; store-side trans"),
     (1, 23): ("Softmax (wide row)",     "streaming online softmax"),
     (1, 36): ("RMSNorm",                "2-pass streaming"),
     (1, 47): ("Sum reduction",          "cub-bound"),
@@ -43,11 +43,11 @@ NOTES = {
     (2, 66): ("Matmul+Dropout+Softmax", "dropout-RNG fix"),
     (2, 88): ("Gemm+GN+Swish+Mul+Sw",   "5 passes -> 2"),
     (2, 99): ("Gemm+GELU+Softmax",      "cuBLAS-bound"),
-    (3, 1):  ("MLP",                    "cuBLAS-bound; in-place ReLU"),
-    (3, 28): ("Vision Transformer",     "small B; SDPA"),
+    (3, 1):  ("MLP",                    "torch.compile (Inductor) wrap"),
+    (3, 28): ("Vision Transformer",     "torch.compile (Inductor) wrap"),
     (3, 43): ("minGPT causal attn",     "SDPA is\\_causal"),
     (3, 44): ("minGPT block",           "SDPA + gelu(tanh)"),
-    (3, 48): ("Mamba-2 (return Y)",     "keep einsum path"),
+    (3, 48): ("Mamba-2 (return Y)",     "param-only contraction hoist"),
 }
 
 

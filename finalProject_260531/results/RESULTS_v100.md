@@ -2,54 +2,52 @@
 
 - 硬體：NVIDIA Tesla V100-SXM2-32GB (Volta, CC 7.0)
 - 精度：FP32；correctness 5 trials，perf 100 trials
-- 每題獨立子行程；總耗時 29.7 min
+- 每題獨立子行程；總耗時 30.9 min
 - baseline 計時檔：`results/timing/V100_SXM2_32GB_NCHC/`
 
 ## 總指標
 
 - compiled：**30/30**
 - correct：**30/30**
-- geomean speedup (correct) vs eager：**0.750x**
-- geomean speedup (correct) vs compile：**0.710x**
-
-> 註：P50/P56/P61/P76/P97 改用誠實手寫 Triton kernel（不再 fallback 到 cuDNN/SDPA），與其餘 25 題併入同一張逐題表；五題皆正確但落敗（0.05–0.60x），因此整體 geomean 由先前的 1.0x 下修。
+- geomean speedup (correct) vs eager：**0.761x**
+- geomean speedup (correct) vs compile：**0.732x**
 
 | metric | p=1.0 | p=1.5 | p=2.0 | p=3.0 |
 |---|---|---|---|---|
-| fast_p vs **eager** | 18/30 (60%) | 2/30 (7%) | 0/30 (0%) | 0/30 (0%) |
-| fast_p vs **compile** | 12/30 (40%) | 1/30 (3%) | 1/30 (3%) | 0/30 (0%) |
+| fast_p vs **eager** | 19/30 (63%) | 4/30 (13%) | 0/30 (0%) | 0/30 (0%) |
+| fast_p vs **compile** | 13/30 (43%) | 2/30 (7%) | 1/30 (3%) | 0/30 (0%) |
 
 ## 逐題結果
 
 | Lv | PID | solution | correct | kernel(ms) | eager(ms) | compile(ms) | sp_eager | sp_compile |
 |---|---|---|---|---|---|---|---|---|
-| 1 | 6 | 06_matmul_large_k.py | ✅ | 8.820 | 4.660 | 4.650 | 0.528x | 0.527x |
-| 1 | 9 | 09_tall_skinny_matmul.py | ✅ | 7.820 | 6.370 | 6.350 | 0.815x | 0.812x |
-| 1 | 16 | 16_matmul_transposed_a.py | ✅ | 14.000 | 9.650 | 9.660 | 0.689x | 0.690x |
-| 1 | 18 | 18_matmul_transposed_both.py | ✅ | 15.100 | 9.130 | 9.100 | 0.605x | 0.603x |
-| 1 | 23 | 23_softmax.py | ✅ | 24.700 | 34.700 | 33.300 | 1.405x | 1.348x |
+| 1 | 6 | 06_matmul_large_k.py | ✅ | 6.430 | 4.680 | 4.900 | 0.728x | 0.762x |
+| 1 | 9 | 09_tall_skinny_matmul.py | ✅ | 7.310 | 6.460 | 6.420 | 0.884x | 0.878x |
+| 1 | 16 | 16_matmul_transposed_a.py | ✅ | 11.800 | 9.660 | 9.670 | 0.819x | 0.819x |
+| 1 | 18 | 18_matmul_transposed_both.py | ✅ | 11.800 | 9.150 | 9.190 | 0.775x | 0.779x |
+| 1 | 23 | 23_softmax.py | ✅ | 24.700 | 34.700 | 33.200 | 1.405x | 1.344x |
 | 1 | 36 | 36_rmsnorm.py | ✅ | 28.700 | 48.400 | 30.500 | 1.686x | 1.063x |
-| 1 | 47 | 47_sum_reduce.py | ✅ | 13.300 | 11.900 | 13.600 | 0.895x | 1.023x |
-| 1 | 50 | 50_conv2d_alexnet.py | ✅ | 158.000 | 7.840 | 7.950 | 0.050x | 0.050x |
-| 1 | 56 | 56_conv2d_asymmetric.py | ✅ | 82.200 | 49.300 | 42.800 | 0.600x | 0.521x |
-| 1 | 61 | 61_conv_transposed_3d.py | ✅ | 77.400 | 27.800 | 43.900 | 0.359x | 0.567x |
-| 1 | 76 | 76_conv1d_dilated.py | ✅ | 514.000 | 40.800 | 40.900 | 0.079x | 0.080x |
-| 1 | 82 | 82_depthwise_conv2d.py | ✅ | 3.840 | 5.030 | 8.520 | 1.310x | 2.219x |
-| 1 | 86 | 86_depthwise_separable_conv2d.py | ✅ | 14.200 | 16.000 | 16.600 | 1.127x | 1.169x |
-| 1 | 93 | 93_masked_cumsum.py | ✅ | 32.100 | 31.900 | 16.200 | 0.994x | 0.505x |
-| 1 | 97 | 97_sdpa.py | ✅ | 1140.000 | 109.000 | 109.000 | 0.096x | 0.096x |
-| 2 | 1 | 01_conv2d_relu_biasadd.py | ✅ | 22.600 | 24.400 | 24.600 | 1.080x | 1.088x |
-| 2 | 12 | 12_gemm_mul_leakyrelu.py | ✅ | 9.800 | 9.890 | 9.550 | 1.009x | 0.974x |
-| 2 | 21 | 21_conv_add_scale_sigmoid_gn.py | ✅ | 12.400 | 18.000 | 12.700 | 1.452x | 1.024x |
-| 2 | 22 | 22_matmul_clamp_lse_mish.py | ✅ | 9.760 | 10.200 | 9.770 | 1.045x | 1.001x |
-| 2 | 40 | 40_matmul_scale_residual.py | ✅ | 38.900 | 40.300 | 37.700 | 1.036x | 0.969x |
-| 2 | 45 | 45_gemm_sigmoid_lse.py | ✅ | 29.500 | 29.900 | 28.800 | 1.014x | 0.976x |
-| 2 | 56 | 56_matmul_sigmoid_sum.py | ✅ | 20.000 | 20.100 | 20.000 | 1.005x | 1.000x |
-| 2 | 66 | 66_matmul_dropout_softmax.py | ✅ | 5.000 | 5.040 | 4.980 | 1.008x | 0.996x |
-| 2 | 88 | 88_gemm_gn_swish_mul_swish.py | ✅ | 10.500 | 10.600 | 9.880 | 1.010x | 0.941x |
-| 2 | 99 | 99_matmul_gelu_softmax.py | ✅ | 9.870 | 9.900 | 9.580 | 1.003x | 0.971x |
-| 3 | 1 | 01_mlp.py | ✅ | 12.800 | 12.800 | 12.600 | 1.000x | 0.984x |
-| 3 | 28 | 28_vit.py | ✅ | 2.690 | 2.630 | 2.960 | 0.978x | 1.100x |
-| 3 | 43 | 43_mingpt_causal_attention.py | ✅ | 28.900 | 43.800 | 35.100 | 1.516x | 1.215x |
-| 3 | 44 | 44_minigpt_block.py | ✅ | 77.200 | 107.000 | 81.800 | 1.386x | 1.060x |
-| 3 | 48 | 48_mamba2.py | ✅ | 23.900 | 25.300 | 16.500 | 1.059x | 0.690x |
+| 1 | 47 | 47_sum_reduce.py | ✅ | 12.500 | 11.900 | 13.600 | 0.952x | 1.088x |
+| 1 | 50 | 50_conv2d_alexnet.py | ✅ | 15.900 | 8.110 | 8.700 | 0.510x | 0.547x |
+| 1 | 56 | 56_conv2d_asymmetric.py | ✅ | 74.800 | 21.700 | 25.900 | 0.290x | 0.346x |
+| 1 | 61 | 61_conv_transposed_3d.py | ✅ | 77.300 | 31.400 | 31.400 | 0.406x | 0.406x |
+| 1 | 76 | 76_conv1d_dilated.py | ✅ | 70.800 | 45.600 | 45.100 | 0.644x | 0.637x |
+| 1 | 82 | 82_depthwise_conv2d.py | ✅ | 3.840 | 5.030 | 8.530 | 1.310x | 2.221x |
+| 1 | 86 | 86_depthwise_separable_conv2d.py | ✅ | 9.510 | 11.100 | 16.500 | 1.167x | 1.735x |
+| 1 | 93 | 93_masked_cumsum.py | ✅ | 16.800 | 31.400 | 16.300 | 1.869x | 0.970x |
+| 1 | 97 | 97_sdpa.py | ✅ | 739.000 | 110.000 | 110.000 | 0.149x | 0.149x |
+| 2 | 1 | 01_conv2d_relu_biasadd.py | ✅ | 22.600 | 24.300 | 24.700 | 1.075x | 1.093x |
+| 2 | 12 | 12_gemm_mul_leakyrelu.py | ✅ | 9.880 | 9.990 | 9.530 | 1.011x | 0.965x |
+| 2 | 21 | 21_conv_add_scale_sigmoid_gn.py | ✅ | 12.400 | 18.000 | 14.200 | 1.452x | 1.145x |
+| 2 | 22 | 22_matmul_clamp_lse_mish.py | ✅ | 9.850 | 10.300 | 9.520 | 1.046x | 0.966x |
+| 2 | 40 | 40_matmul_scale_residual.py | ✅ | 38.600 | 40.800 | 38.000 | 1.057x | 0.984x |
+| 2 | 45 | 45_gemm_sigmoid_lse.py | ✅ | 29.700 | 30.100 | 29.000 | 1.013x | 0.976x |
+| 2 | 56 | 56_matmul_sigmoid_sum.py | ✅ | 20.200 | 20.200 | 20.200 | 1.000x | 1.000x |
+| 2 | 66 | 66_matmul_dropout_softmax.py | ✅ | 5.160 | 5.290 | 5.110 | 1.025x | 0.990x |
+| 2 | 88 | 88_gemm_gn_swish_mul_swish.py | ✅ | 9.890 | 10.700 | 9.940 | 1.082x | 1.005x |
+| 2 | 99 | 99_matmul_gelu_softmax.py | ✅ | 9.940 | 9.990 | 9.810 | 1.005x | 0.987x |
+| 3 | 1 | 01_mlp.py | ✅ | 12.200 | 13.100 | 12.600 | 1.074x | 1.033x |
+| 3 | 28 | 28_vit.py | ✅ | 1020.000 | 2.630 | 3.190 | 0.003x | 0.003x |
+| 3 | 43 | 43_mingpt_causal_attention.py | ✅ | 29.200 | 43.900 | 35.200 | 1.503x | 1.205x |
+| 3 | 44 | 44_minigpt_block.py | ✅ | 78.100 | 108.000 | 82.500 | 1.383x | 1.056x |
+| 3 | 48 | 48_mamba2.py | ✅ | 16.000 | 25.300 | 16.500 | 1.581x | 1.031x |

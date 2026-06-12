@@ -37,3 +37,19 @@ python scripts/run_and_check.py \
 ```
 
 **狀態**：正確但未達加速目標，標記為 `WIP`，待之後若有空檔回頭優化。先繼續第 2 題以維持進度。
+
+---
+
+## Profile-driven 調優 pass（補做）
+
+| 版本 | 設定 | kernel_ms | speedup_compile | 備註 |
+|---|---|---|---|---|
+| v1 | BLOCK 64×64, BLOCK_K=32, SPLIT_K=16, warps=4, stages=3 | 8.84 | 0.528× | 起點 |
+| v2 | 同上但 BLOCK_K=64 | 10.8 | 0.431× | 變慢，捨棄 |
+| v3 | **BLOCK 128×128**, BLOCK_K=32, **SPLIT_K=20**, **warps=8**, stages=3 | 6.43 | 0.726× | grid 對齊 80 SM，大勝 |
+| v4 | 同 v3 但 **num_stages=2** | 6.43 | **0.728×** | 與 v3 持平、SMEM 較省，**採用** |
+
+- **決定**：採用 v4（BLOCK 128×128 / BLOCK_K=32 / SPLIT_K=20 / warps=8 / stages=2）。
+- 關鍵洞見：SPLIT_K=20 → grid 每層對齊 80 SM；大 tile 減少 K-loop 迭代與 atomic-add 次數。
+  占用率仍卡在 ~12.5%（220 regs），此為 V100 FP32 純 Triton GEMM 對上 cuBLAS（~95% peak）的結構性天花板。
+- 最終 **0.528× → 0.728×**，v3 備份於 `_fallback_backup/06_matmul_large_k.split20_w8_s3.py`。

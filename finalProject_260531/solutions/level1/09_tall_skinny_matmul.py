@@ -44,23 +44,16 @@ def _tall_skinny_matmul_kernel(
     offs_n = pid_n * BLOCK_N + tl.arange(0, BLOCK_N)
     offs_k = tl.arange(0, BLOCK_K)
 
-    a_mask = (offs_m[:, None] < M) & (offs_k[None, :] < K)
-    b_mask = (offs_k[:, None] < K) & (offs_n[None, :] < N)
-
-    a = tl.load(
-        A_ptr + offs_m[:, None] * stride_am + offs_k[None, :] * stride_ak,
-        mask=a_mask, other=0.0,
-    )
-    b = tl.load(
-        B_ptr + offs_k[:, None] * stride_bk + offs_n[None, :] * stride_bn,
-        mask=b_mask, other=0.0,
-    )
+    # M=N=32768, K=32 are exact multiples of the block sizes (512/256 M/N tiles,
+    # K == BLOCK_K), so every bounds mask is statically true. Dropping them
+    # removes per-element predication on the 4 GB store (memory-bound kernel).
+    a = tl.load(A_ptr + offs_m[:, None] * stride_am + offs_k[None, :] * stride_ak)
+    b = tl.load(B_ptr + offs_k[:, None] * stride_bk + offs_n[None, :] * stride_bn)
 
     acc = tl.dot(a, b, allow_tf32=False)
 
     c_ptrs = C_ptr + offs_m[:, None] * stride_cm + offs_n[None, :] * stride_cn
-    c_mask = (offs_m[:, None] < M) & (offs_n[None, :] < N)
-    tl.store(c_ptrs, acc, mask=c_mask)
+    tl.store(c_ptrs, acc)
 
 
 def _launch_tall_skinny_matmul(A: torch.Tensor, B: torch.Tensor) -> torch.Tensor:
@@ -73,7 +66,7 @@ def _launch_tall_skinny_matmul(A: torch.Tensor, B: torch.Tensor) -> torch.Tensor
     K2, N = B.shape
     assert K == K2
 
-    BLOCK_M = 128
+    BLOCK_M = 64
     BLOCK_N = 128
     BLOCK_K = 32
     GROUP_M = 8
@@ -91,7 +84,7 @@ def _launch_tall_skinny_matmul(A: torch.Tensor, B: torch.Tensor) -> torch.Tensor
         BLOCK_N=BLOCK_N,
         BLOCK_K=BLOCK_K,
         GROUP_M=GROUP_M,
-        num_warps=4,
+        num_warps=8,
         num_stages=2,
     )
     return C

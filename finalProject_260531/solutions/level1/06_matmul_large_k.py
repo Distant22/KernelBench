@@ -73,10 +73,10 @@ def _launch_split_k_matmul(A: torch.Tensor, B: torch.Tensor) -> torch.Tensor:
     K2, N = B.shape
     assert K == K2, f"Inner dims mismatch: {K} vs {K2}"
 
-    BLOCK_M = 64
-    BLOCK_N = 64
+    BLOCK_M = 128
+    BLOCK_N = 128
     BLOCK_K = 32
-    SPLIT_K = 16  # 4*4*16 = 256 blocks >> 80 SMs on V100 -> good saturation
+    SPLIT_K = 20  # 2*2*20 = 80 programs == 80 SMs on V100
 
     C = torch.zeros((M, N), device=A.device, dtype=torch.float32)
 
@@ -91,8 +91,8 @@ def _launch_split_k_matmul(A: torch.Tensor, B: torch.Tensor) -> torch.Tensor:
         BLOCK_N=BLOCK_N,
         BLOCK_K=BLOCK_K,
         SPLIT_K=SPLIT_K,
-        num_warps=4,
-        num_stages=3,
+        num_warps=8,
+        num_stages=2,
     )
     return C
 

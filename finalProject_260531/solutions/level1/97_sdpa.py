@@ -38,13 +38,21 @@ def _flash_attn_kernel(
     BLOCK_M: tl.constexpr, BLOCK_N: tl.constexpr,
     BD: tl.constexpr, BK: tl.constexpr,
 ):
+    # v4: compute the QK^T softmax ONCE per KV block and fan it out to all four
+    # BD=256-wide output column slices (HEAD_DIM/BD == 4, unrolled into named
+    # accumulators acc0..acc3). v3 tiled the output head-dim as a *grid* dim, so
+    # each of the 4 programs re-ran the entire QK loop -> 4x redundant QK work
+    # (the dominant cost). This removes that redundancy while keeping every
+    # SMEM tile small: each V slice is [BLOCK_N, BD] = 64 KB.
     pid_bh = tl.program_id(0)
     pid_m = tl.program_id(1)
-    pid_d = tl.program_id(2)
 
     offs_m = pid_m * BLOCK_M + tl.arange(0, BLOCK_M)
     offs_n = tl.arange(0, BLOCK_N)
-    offs_do = pid_d * BD + tl.arange(0, BD)      # this program's output columns
+    offs_d0 = 0 * BD + tl.arange(0, BD)
+    offs_d1 = 1 * BD + tl.arange(0, BD)
+    offs_d2 = 2 * BD + tl.arange(0, BD)
+    offs_d3 = 3 * BD + tl.arange(0, BD)
     mask_m = offs_m < S
 
     base = pid_bh * stride_bh
@@ -54,7 +62,10 @@ def _flash_attn_kernel(
 
     m_i = tl.full((BLOCK_M,), -float("inf"), dtype=tl.float32)
     l_i = tl.zeros((BLOCK_M,), dtype=tl.float32)
-    acc = tl.zeros((BLOCK_M, BD), dtype=tl.float32)
+    acc0 = tl.zeros((BLOCK_M, BD), dtype=tl.float32)
+    acc1 = tl.zeros((BLOCK_M, BD), dtype=tl.float32)
+    acc2 = tl.zeros((BLOCK_M, BD), dtype=tl.float32)
+    acc3 = tl.zeros((BLOCK_M, BD), dtype=tl.float32)
 
     for start_n in range(0, S, BLOCK_N):
         cur_n = start_n + offs_n
@@ -72,21 +83,29 @@ def _flash_attn_kernel(
         s = s * scale
         s = tl.where(mask_n[None, :], s, -float("inf"))
 
-        # online softmax
+        # online softmax (computed ONCE, reused for all output column slices)
         m_new = tl.maximum(m_i, tl.max(s, axis=1))
         p = tl.exp(s - m_new[:, None])
         alpha = tl.exp(m_i - m_new)
         l_i = l_i * alpha + tl.sum(p, axis=1)
 
-        # accumulate this program's output column slice: P @ V[:, offs_do]
-        v = tl.load(v_row + cur_n[:, None] * stride_s + offs_do[None, :] * stride_d,
-                    mask=mask_n[:, None], other=0.0)                 # (BLOCK_N, BD)
-        acc = acc * alpha[:, None] + tl.dot(p, v, allow_tf32=False)
+        v_n = v_row + cur_n[:, None] * stride_s
+        v0 = tl.load(v_n + offs_d0[None, :] * stride_d, mask=mask_n[:, None], other=0.0)
+        v1 = tl.load(v_n + offs_d1[None, :] * stride_d, mask=mask_n[:, None], other=0.0)
+        v2 = tl.load(v_n + offs_d2[None, :] * stride_d, mask=mask_n[:, None], other=0.0)
+        v3 = tl.load(v_n + offs_d3[None, :] * stride_d, mask=mask_n[:, None], other=0.0)
+        acc0 = acc0 * alpha[:, None] + tl.dot(p, v0, allow_tf32=False)
+        acc1 = acc1 * alpha[:, None] + tl.dot(p, v1, allow_tf32=False)
+        acc2 = acc2 * alpha[:, None] + tl.dot(p, v2, allow_tf32=False)
+        acc3 = acc3 * alpha[:, None] + tl.dot(p, v3, allow_tf32=False)
         m_i = m_new
 
-    acc = acc / l_i[:, None]
-    tl.store(o_ptr + base + offs_m[:, None] * stride_s + offs_do[None, :] * stride_d,
-             acc, mask=mask_m[:, None])
+    inv = 1.0 / l_i[:, None]
+    o_n = o_ptr + base + offs_m[:, None] * stride_s
+    tl.store(o_n + offs_d0[None, :] * stride_d, acc0 * inv, mask=mask_m[:, None])
+    tl.store(o_n + offs_d1[None, :] * stride_d, acc1 * inv, mask=mask_m[:, None])
+    tl.store(o_n + offs_d2[None, :] * stride_d, acc2 * inv, mask=mask_m[:, None])
+    tl.store(o_n + offs_d3[None, :] * stride_d, acc3 * inv, mask=mask_m[:, None])
 
 
 class ModelNew(nn.Module):
@@ -102,15 +121,16 @@ class ModelNew(nn.Module):
         o = torch.empty_like(q)
 
         BLOCK_M = 16
-        BLOCK_N = 64
-        BD = 256          # output head-dim tile (SMEM-bound: V tile = BLOCK_N*BD)
-        BK = 256          # QK contraction tile
-        grid = (B * H, triton.cdiv(S, BLOCK_M), D // BD)
+        BLOCK_N = 16
+        BD = 256          # output head-dim slice; D//BD must == 4 (unrolled)
+        BK = 128          # QK contraction tile
+        assert D == 4 * BD
+        grid = (B * H, triton.cdiv(S, BLOCK_M))
         _flash_attn_kernel[grid](
             q, k, v, o,
             S, scale,
             q.stride(0), q.stride(1), q.stride(2),
             HEAD_DIM=D, BLOCK_M=BLOCK_M, BLOCK_N=BLOCK_N, BD=BD, BK=BK,
-            num_warps=4, num_stages=2,
+            num_warps=8, num_stages=1,
         )
         return o.view(B, H, S, D)

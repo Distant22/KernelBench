@@ -12,7 +12,7 @@
 | 6 | level2/45 Linear + Sigmoid + Linear + LSE | [45_gemm_sigmoid_lse.py](../solutions/level2/45_gemm_sigmoid_lse.py) | [45](level2/45_gemm_sigmoid_lse.md) | ✅ | **1.01×** / 0.98× | 兩個 GEMM 占 ~99% |
 | 7 | level2/56 Matmul + Sigmoid + Sum | [56_matmul_sigmoid_sum.py](../solutions/level2/56_matmul_sigmoid_sum.py) | [56](level2/56_matmul_sigmoid_sum.md) | ✅ | 1.00× / 1.00× | GEMM-bound |
 | 8 | level2/66 Matmul + Dropout + Softmax | [66_matmul_dropout_softmax.py](../solutions/level2/66_matmul_dropout_softmax.py) | [66](level2/66_matmul_dropout_softmax.md) | ✅ | **1.00×** / **1.01×** | 🛠️ Dropout monkey-patch fix |
-| 9 | level2/88 Linear + GN + Swish + Mul + Swish | [88_gemm_gn_swish_mul_swish.py](../solutions/level2/88_gemm_gn_swish_mul_swish.py) | [88](level2/88_gemm_gn_swish_mul_swish.md) | ✅ | **1.01×** / 0.94× | 5 passes → 2 passes |
+| 9 | level2/88 Linear + GN + Swish + Mul + Swish | [88_gemm_gn_swish_mul_swish.py](../solutions/level2/88_gemm_gn_swish_mul_swish.py) | [88](level2/88_gemm_gn_swish_mul_swish.md) | ✅ | **1.07×** / 0.99× | 🛠️ epilogue 756→102µs single-pass fusion |
 | 10 | level2/99 Linear + GELU + Softmax | [99_matmul_gelu_softmax.py](../solutions/level2/99_matmul_gelu_softmax.py) | [99](level2/99_matmul_gelu_softmax.md) | ✅ | 0.99× / 0.96× | GEMM-bound |
 
 ## 統計
@@ -23,8 +23,19 @@
 
 ## 主要結論
 - **Conv-driven 題型**（1, 3）：cuDNN conv + Triton fused epilogue 是穩定的 win。Task 21 因為 5 個 elementwise/reduce passes → 2 passes，獲得 **1.45×**。
-- **GEMM-driven 題型**（2, 4, 5, 6, 7, 8, 9, 10）：cuBLAS FP32 在 V100 上已 ~95% peak，純 Triton 會輸；後段融合最多 1.03–1.05×（Task 4, 5, 9）。任何不能繞過 GEMM 的題型上限差不多 1.0×。
+- **GEMM-driven 題型**（2, 4, 5, 6, 7, 8, 9, 10）：cuBLAS FP32 在 V100 上已 ~95% peak（P88 實測 `volta_sgemm` = 96.5% SM peak），純 Triton 會輸；後段融合最多 1.03–1.07×。任何不能繞過 GEMM 的題型上限差不多 1.0×。
 - **代數化簡**（Task 5：y·s+y → y·(s+1)；Task 4：y·scale+y → 4y）能再省一個 elementwise pass。
+
+## 🛠️ 2026-06-11 profile-driven epilogue 優化（針對 <1.0× compile 的題目）
+- **P88（GroupNorm epilogue）**：v1 用 N·G=262144 個 1-warp tiny program ×2 pass（756 µs，比 compile 慢 5.3×）。
+  改成 **單一 per-row fused kernel**（1024 programs，整列當 `[256,32]` tile，register 內多組 reduce）：
+  epilogue **756 → 102 µs**（反超 compile 142 µs），`sc 0.940 → 0.993`、`se 1.009 → 1.070`，correct 5/5。**實質打平 compile**。
+- **P99（GELU+softmax epilogue）**：v1 三趟讀（max/sumexp/write）。改成 **online flash-style softmax 兩趟**：
+  epilogue **170 → 132 µs**（反超 compile 160 µs），correct 5/5。wall-clock 受 GEMM 主導 ≈ 1.0× eager。
+- **P45 / P12 / P22 / P40 / P66**：以 timeline + roofline 確認**無可修復 headroom**——
+  P45 的 `sigmoid` 已達 783 GB/s = 87% V100 peak（roofline），其餘 epilogue 皆 < 100 µs，
+  GEMM 占 95–98% 為 cuBLAS 天花板。記為 honest best-effort。
+- **教訓**：「每組一個 tiny program」在 program 數達數十萬、每個工作量 < 1 warp 時，啟動/排程開銷會壓垮 kernel；改用「每列一個 program + register 內多組 reduce」可同時消除多餘讀取與中間張量。
 
 ## ⚠️ 重要 issue：KernelBench RNG 一致性 bug
 - 任何 model 含 `nn.Dropout` / 其他 RNG ops，KernelBench correctness 驗證會 FAIL（max diff ~3e-4 > fp32 tol 1e-4），原因：`eval.py` 在兩個 forward 之間沒有 re-seed CUDA RNG。

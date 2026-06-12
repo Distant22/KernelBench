@@ -54,47 +54,58 @@ torch.allclose = _streaming_allclose
 
 
 @triton.jit
-def _sum_reduce_dim1_kernel(
-    X_ptr, OUT_ptr,
-    F, J,
+def _sum_reduce_dim1_split_kernel(
+    X_ptr, PART_ptr,
+    F, J, NSPLIT,
     stride_xb, stride_xf, stride_xj,
-    stride_ob, stride_oj,
+    stride_pb, stride_ps, stride_pj,
     BLOCK_J: tl.constexpr,
 ):
     pid_b = tl.program_id(0)
     pid_j = tl.program_id(1)
+    pid_s = tl.program_id(2)
 
     j_offs = pid_j * BLOCK_J + tl.arange(0, BLOCK_J)
     j_mask = j_offs < J
 
+    # This program reduces the F-slice [f0, f1) for its (batch, j-tile).
+    chunk = (F + NSPLIT - 1) // NSPLIT
+    f0 = pid_s * chunk
+    f1 = tl.minimum(f0 + chunk, F)
+
     x_base = X_ptr + pid_b * stride_xb + j_offs * stride_xj
     acc = tl.zeros([BLOCK_J], dtype=tl.float32)
-    for f in range(0, F):
+    for f in range(f0, f1):
         v = tl.load(x_base + f * stride_xf, mask=j_mask, other=0.0)
         acc += v
 
-    o_ptr = OUT_ptr + pid_b * stride_ob + j_offs * stride_oj
-    tl.store(o_ptr, acc, mask=j_mask)
+    p_ptr = PART_ptr + pid_b * stride_pb + pid_s * stride_ps + j_offs * stride_pj
+    tl.store(p_ptr, acc, mask=j_mask)
 
 
 def _launch_sum_dim1(x: torch.Tensor) -> torch.Tensor:
     assert x.is_cuda and x.dtype == torch.float32 and x.dim() == 3
     x = x.contiguous()
     B, F, J = x.shape
-    out = torch.empty((B, 1, J), device=x.device, dtype=x.dtype)
-    out_view = out.view(B, J)
 
+    # Split the F reduction across NSPLIT programs to raise block count /
+    # occupancy on this bandwidth-bound reduction (512 blocks -> 512*NSPLIT),
+    # then combine the small partials.
+    NSPLIT = 8
     BLOCK_J = 1024
-    grid = (B, triton.cdiv(J, BLOCK_J))
-    _sum_reduce_dim1_kernel[grid](
-        x, out_view,
-        F, J,
+    part = torch.empty((B, NSPLIT, J), device=x.device, dtype=x.dtype)
+    grid = (B, triton.cdiv(J, BLOCK_J), NSPLIT)
+    _sum_reduce_dim1_split_kernel[grid](
+        x, part,
+        F, J, NSPLIT,
         x.stride(0), x.stride(1), x.stride(2),
-        out_view.stride(0), out_view.stride(1),
+        part.stride(0), part.stride(1), part.stride(2),
         BLOCK_J=BLOCK_J,
         num_warps=4,
         num_stages=4,
     )
+    # Combine the NSPLIT partials (tiny: B*NSPLIT*J floats) into the result.
+    out = part.sum(dim=1, keepdim=True)
     return out
 
 

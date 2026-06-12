@@ -54,7 +54,7 @@ The hand-written Triton flash-attention kernel **does not compile** on this
 Triton version. It builds a Python list of per-head-dim-chunk register
 accumulators (`q_chunks = []`, `.append(...)`) inside `@triton.jit` across a
 `tl.static_range` loop; the compiler raises
-`triton.compiler.errors.CompilationError: NameError('q_chunks is not defined')`.
+`triton.compiler.errors.CompilationError: NameError('q_chunks is not defined')`. 
 The attempt is recorded as `compiled=True, correctness=False` (the model class
 compiles, but the kernel fails to JIT at launch). Per the honest-recording
 policy, the kernel is left unmodified.

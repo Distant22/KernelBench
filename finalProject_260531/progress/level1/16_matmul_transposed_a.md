@@ -34,3 +34,18 @@ python scripts/run_and_check.py \
     eval_mode=local gpu_arch='["Volta"]' \
     check_kernel=False backend=triton
 ```
+
+---
+
+## Profile-driven 調優 pass（補做）
+
+C = A.T @ B，A(8192,2048)、B(8192,4096) → C(2048,4096)。
+
+| 版本 | 設定 | kernel_ms | speedup_compile | 備註 |
+|---|---|---|---|---|
+| v1 | BLOCK 128×128, BLOCK_K=32, GROUP_M=8, warps=4, stages=4 | — | 0.785× | 起點 |
+| v2 | 同上但 **warps=8, stages=3** | 12.0 | **0.805×** | 136 regs、SM 75%、占用率 12.5%，**採用** |
+
+- **關鍵洞見**：此題只需單一 `tl.trans(a)`（A 為 (K,M)）。warps=8 增加 ILP，SM 利用率達 75%。
+  嘗試過 reformulation 但 A.T@B 結構上一定要一次 transpose，無法消除。
+- 最終 **0.785× → 0.805×**，屬計算受限（SM 75%），接近純 Triton FP32 對上 cuBLAS 的結構天花板。

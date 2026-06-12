@@ -74,7 +74,10 @@ def _masked_cumsum_dim1_kernel(
 
 def _launch_masked_cumsum_dim1(x: torch.Tensor, m: torch.Tensor) -> torch.Tensor:
     assert x.is_cuda and x.dtype == torch.float32 and x.dim() == 2
-    assert m.shape == x.shape and m.dtype == torch.bool
+    # NOTE: KernelBench's eval casts every input to fp32 (_process_input_tensor),
+    # so the bool mask arrives as float32 0.0/1.0. Accept bool OR float here;
+    # the kernel multiplies x * m.to(fp32) regardless, so both are correct.
+    assert m.shape == x.shape and m.dtype in (torch.bool, torch.float32, torch.float16)
     x = x.contiguous()
     m = m.contiguous()
     B, N = x.shape
@@ -100,13 +103,16 @@ class ModelNew(nn.Module):
         self.dim = dim
 
     def forward(self, x: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+        # KernelBench eval casts the bool mask to fp32 before forward(), so we
+        # must NOT require mask.dtype == torch.bool here (that guard made the
+        # Triton kernel dead code and silently fell back to the reference).
         if (
             self.dim == 1
             and x.dim() == 2
             and x.is_cuda
             and x.dtype == torch.float32
-            and mask.dtype == torch.bool
             and mask.shape == x.shape
+            and mask.dtype in (torch.bool, torch.float32, torch.float16)
         ):
             return _launch_masked_cumsum_dim1(x, mask)
         return torch.cumsum(x * mask, dim=self.dim)

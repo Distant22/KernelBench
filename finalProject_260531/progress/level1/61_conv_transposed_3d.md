@@ -1,5 +1,14 @@
 # Level 1 / Problem 61 — ConvTranspose3D
 
+> **2026-06-12 — 手寫 Triton gather-GEMM，0.36× (compile)。**
+> Cout=48 已被 BLOCK_M=64 涵蓋（無冗餘-gather bug）。試 num_warps8（80.2ms 更差）、BLOCK_K=64
+> （147ms，255 reg spill 更差）皆退回原版 **77.4ms (0.36×)**。deep-profile：sm 62% / mem 67%，
+> **本質 compute/mem 平衡受限**，occ/block lever 皆無效——這是該 gather-based 轉置卷積的訠實天花板。
+
+---
+
+## （以下為原紀錄）
+
 **Shape**: x (8, 48, 64, 64, 64) FP32 ≈ 50 MB；3×3×3 kernel → out (8, 48, 66, 66, 66) ≈ 55 MB。**cuDNN-bound**。
 **Baseline**: PyTorch eager 27.8 ms, torch.compile 27.9 ms
 

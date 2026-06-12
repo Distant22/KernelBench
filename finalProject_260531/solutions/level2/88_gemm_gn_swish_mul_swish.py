@@ -3,19 +3,26 @@
 Pipeline
 --------
 1. Linear via cuBLAS (1024x8192x8192).
-2. Triton pass-1: per-(sample, group) reduction over 32 elements gives
-   sum / sumsq -> mean / inv_std on host.
-3. Triton pass-2: apply (gamma, beta) normalize, then x*sigmoid(x), then
-   *w[c], then x*sigmoid(x) — all fused in a single pass.
+2. Single Triton kernel, **one program per row**: load the whole C=8192 row
+   as a [G, CG] = [256, 32] tile, compute all 256 group mean/var reductions in
+   registers (axis=1), then normalize + swish + multiply + swish, and write
+   once. No intermediate mean/inv_std buffer, single global read + single
+   global write.
 
 CoT
 ---
-1. GEMM compute-bound (cuBLAS ~10 ms ~ peak); the rest is 5 elementwise/
-   reduce kernels on a 32 MB tensor (~0.4 ms baseline).
-2. Pass-1: launch (N*G,) programs, each does a 32-element reduction.
-   Pass-2: tile the (CG*?? wait single-row group of 32) -> just per-group
-   apply with all post-ops fused.
-3. Each program loads a contiguous 32-element slab; perfectly coalesced.
+1. GEMM compute-bound (cuBLAS ~10 ms ~ peak); the GroupNorm epilogue on the
+   32 MB GEMM output is memory-bound.
+2. Prior v1 launched N*G = 262144 tiny 1-warp programs *twice* (reduce + post),
+   each reducing only 32 elements -> 756 us, 5x slower than torch.compile's
+   single fused 140 us kernel. Root cause: launch/scheduling overhead of 262k
+   tiny programs + an extra full read of x (the second pass) + an intermediate
+   mean/inv_std round-trip.
+3. Fix: fuse both passes into ONE kernel with one program per row (1024
+   programs). Each loads its full row as a [G, CG] tile, reduces over the 32
+   group channels in registers, applies all post-ops, writes once. Traffic
+   drops from ~96 MB (read+read+write) to ~64 MB (read+write); 262144x2 program
+   launches collapse to 1024.
 4. See code.
 """
 
@@ -26,60 +33,34 @@ import triton
 import triton.language as tl
 
 
-# -- pass 1: per-group sum / sumsq -------------------------------------------
+# -- single fused pass: reduce + normalize + swish + mul + swish (per row) ----
 @triton.jit
-def _gn_reduce_kernel(
-    x_ptr, sum_ptr, sumsq_ptr,
-    N, C, G, CG,
-    BLOCK: tl.constexpr,                # next pow2 >= CG
+def _gn_fused_kernel(
+    x_ptr, gamma_ptr, beta_ptr, mw_ptr, out_ptr,
+    C, eps,
+    G: tl.constexpr, CG: tl.constexpr,
 ):
-    pid = tl.program_id(0)              # 0 .. N*G - 1
-    n = pid // G
-    g = pid % G
-    base = n * C + g * CG
-    offs = tl.arange(0, BLOCK)
-    mask = offs < CG
-    v = tl.load(x_ptr + base + offs, mask=mask, other=0.0)
-    s = tl.sum(tl.where(mask, v, 0.0), axis=0)
-    sq = tl.sum(tl.where(mask, v * v, 0.0), axis=0)
-    tl.store(sum_ptr + pid, s)
-    tl.store(sumsq_ptr + pid, sq)
+    row = tl.program_id(0)
+    base = row * C
+    g_idx = tl.arange(0, G)                       # [G]
+    c_idx = tl.arange(0, CG)                      # [CG]
+    offs = g_idx[:, None] * CG + c_idx[None, :]   # [G, CG] channel indices
 
+    x = tl.load(x_ptr + base + offs)              # [G, CG]
+    inv_n = 1.0 / CG
+    mean = tl.sum(x, axis=1) * inv_n              # [G]
+    var = tl.sum(x * x, axis=1) * inv_n - mean * mean
+    inv = 1.0 / tl.sqrt(var + eps)                # [G]
 
-# -- pass 2: normalize + swish + mul + swish ---------------------------------
-@triton.jit
-def _gn_post_kernel(
-    x_ptr, mean_ptr, inv_std_ptr,
-    gamma_ptr, beta_ptr, mw_ptr, out_ptr,
-    N, C, G, CG,
-    BLOCK: tl.constexpr,
-):
-    pid = tl.program_id(0)
-    n = pid // G
-    g = pid % G
-    base = n * C + g * CG
-    offs = tl.arange(0, BLOCK)
-    mask = offs < CG
-    ch = g * CG + offs                  # global channel index
-    m = tl.load(mean_ptr + pid)
-    inv = tl.load(inv_std_ptr + pid)
-    gam = tl.load(gamma_ptr + ch, mask=mask, other=0.0)
-    bet = tl.load(beta_ptr + ch, mask=mask, other=0.0)
-    mw = tl.load(mw_ptr + ch, mask=mask, other=0.0)
+    gam = tl.load(gamma_ptr + offs)               # [G, CG]
+    bet = tl.load(beta_ptr + offs)
+    mw = tl.load(mw_ptr + offs)
 
-    x = tl.load(x_ptr + base + offs, mask=mask, other=0.0)
-    y = (x - m) * inv * gam + bet                    # GroupNorm
-    y = y * (1.0 / (1.0 + tl.exp(-y)))               # swish #1
-    y = y * mw                                       # multiply
-    y = y * (1.0 / (1.0 + tl.exp(-y)))               # swish #2
-    tl.store(out_ptr + base + offs, y, mask=mask)
-
-
-def _next_pow2(x: int) -> int:
-    p = 1
-    while p < x:
-        p <<= 1
-    return p
+    y = (x - mean[:, None]) * inv[:, None] * gam + bet   # GroupNorm
+    y = y * (1.0 / (1.0 + tl.exp(-y)))                   # swish #1
+    y = y * mw                                           # multiply
+    y = y * (1.0 / (1.0 + tl.exp(-y)))                   # swish #2
+    tl.store(out_ptr + base + offs, y)
 
 
 def fused_gn_swish_mul_swish(
@@ -90,23 +71,11 @@ def fused_gn_swish_mul_swish(
     N, C = x.shape
     G = num_groups
     CG = C // G
-    BLOCK = _next_pow2(CG)
-
-    sums = torch.empty(N * G, dtype=torch.float32, device=x.device)
-    sumsq = torch.empty_like(sums)
-    _gn_reduce_kernel[(N * G,)](
-        x, sums, sumsq, N, C, G, CG, BLOCK=BLOCK, num_warps=1,
-    )
-
-    inv_n = 1.0 / float(CG)
-    mean = sums * inv_n
-    var = sumsq * inv_n - mean * mean
-    inv_std = torch.rsqrt(var + eps)
 
     out = torch.empty_like(x)
-    _gn_post_kernel[(N * G,)](
-        x, mean, inv_std, gamma, beta, mw, out,
-        N, C, G, CG, BLOCK=BLOCK, num_warps=1,
+    _gn_fused_kernel[(N,)](
+        x, gamma, beta, mw, out,
+        C, eps, G=G, CG=CG, num_warps=8,
     )
     return out
 

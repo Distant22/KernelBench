@@ -16,51 +16,72 @@ import triton.language as tl
 
 @triton.jit
 def _conv2d_kernel(
-    x_ptr, w_ptr, y_ptr,
+    x_ptr, w_ptr, b_ptr, y_ptr,
     B, Cin, H, W, Cout, Hout, Wout,
+    HAS_BIAS: tl.constexpr,
     KH: tl.constexpr, KW: tl.constexpr,
     SH: tl.constexpr, SW: tl.constexpr,
     PH: tl.constexpr, PW: tl.constexpr,
     BLOCK_M: tl.constexpr, BLOCK_N: tl.constexpr, BLOCK_K: tl.constexpr,
 ):
-    pid_b = tl.program_id(0)
-    pid_m = tl.program_id(1)
-    pid_hw = tl.program_id(2)
+    # Single implicit-GEMM formulation.
+    #   M = Cout                              (rows of weight)
+    #   N = B * Hout * Wout                   (flattened output pixels)
+    #   K = Cin * KH * KW                      (full contraction in one loop)
+    # This removes the previous 121 tiny per-(kh,kw) dots with K=3 padded to 16
+    # (which wasted ~81% of every dot and was 13x slower than cuDNN).
+    pid_m = tl.program_id(0)
+    pid_n = tl.program_id(1)
 
-    n_wtile = tl.cdiv(Wout, BLOCK_N)
-    oh = pid_hw // n_wtile
-    wt = pid_hw % n_wtile
+    HW = Hout * Wout
+    K = Cin * KH * KW
+    KHW = KH * KW
 
     offs_m = pid_m * BLOCK_M + tl.arange(0, BLOCK_M)
-    offs_ow = wt * BLOCK_N + tl.arange(0, BLOCK_N)
+    offs_n = pid_n * BLOCK_N + tl.arange(0, BLOCK_N)
     mask_m = offs_m < Cout
-    mask_ow = offs_ow < Wout
+    mask_n = offs_n < B * HW
+
+    # Decode flattened output index -> (b, oh, ow).
+    nb = offs_n // HW
+    s = offs_n % HW
+    oh = s // Wout
+    ow = s % Wout
 
     acc = tl.zeros((BLOCK_M, BLOCK_N), dtype=tl.float32)
 
-    x_b = x_ptr + pid_b * Cin * H * W
-    for kh in range(0, KH):
-        ih = oh * SH - PH + kh
-        ih_ok = (ih >= 0) & (ih < H)
-        for kw in range(0, KW):
-            iw = offs_ow * SW - PW + kw
-            iw_ok = (iw >= 0) & (iw < W) & mask_ow
-            for ci0 in range(0, Cin, BLOCK_K):
-                cin = ci0 + tl.arange(0, BLOCK_K)
-                mask_c = cin < Cin
-                w_off = (offs_m[:, None] * (Cin * KH * KW)
-                         + cin[None, :] * (KH * KW) + kh * KW + kw)
-                w_tile = tl.load(w_ptr + w_off,
-                                 mask=mask_m[:, None] & mask_c[None, :], other=0.0)
-                x_off = cin[:, None] * (H * W) + ih * W + iw[None, :]
-                x_tile = tl.load(x_b + x_off,
-                                 mask=(mask_c[:, None] & (iw_ok[None, :] & ih_ok)),
-                                 other=0.0)
-                acc += tl.dot(w_tile, x_tile, allow_tf32=False)
+    for k0 in range(0, K, BLOCK_K):
+        offs_k = k0 + tl.arange(0, BLOCK_K)
+        mask_k = offs_k < K
+        # Decode contraction index -> (cin, kh, kw).
+        cin = offs_k // KHW
+        r = offs_k % KHW
+        kh = r // KW
+        kw = r % KW
 
-    y_off = (pid_b * Cout * Hout * Wout + offs_m[:, None] * (Hout * Wout)
-             + oh * Wout + offs_ow[None, :])
-    tl.store(y_ptr + y_off, acc, mask=mask_m[:, None] & mask_ow[None, :])
+        # Weight is contiguous (Cout, Cin, KH, KW) == (Cout, K).
+        w_off = offs_m[:, None] * K + offs_k[None, :]
+        w_tile = tl.load(w_ptr + w_off,
+                         mask=mask_m[:, None] & mask_k[None, :], other=0.0)
+
+        # Gather input pixels for this K block over the N tile.
+        ih = oh[None, :] * SH - PH + kh[:, None]
+        iw = ow[None, :] * SW - PW + kw[:, None]
+        in_ok = (ih >= 0) & (ih < H) & (iw >= 0) & (iw < W)
+        x_off = (nb[None, :] * (Cin * H * W) + cin[:, None] * (H * W)
+                 + ih * W + iw)
+        x_tile = tl.load(x_ptr + x_off,
+                         mask=mask_k[:, None] & mask_n[None, :] & in_ok,
+                         other=0.0)
+        acc += tl.dot(w_tile, x_tile, allow_tf32=False)
+
+    if HAS_BIAS:
+        bias = tl.load(b_ptr + offs_m, mask=mask_m, other=0.0)
+        acc += bias[:, None]
+
+    # Store to y at (b, oc, oh, ow); flattened (b,oh,ow) == offs_n with stride HW per channel.
+    y_off = nb[None, :] * (Cout * HW) + offs_m[:, None] * HW + s[None, :]
+    tl.store(y_ptr + y_off, acc, mask=mask_m[:, None] & mask_n[None, :])
 
 
 class ModelNew(nn.Module):
@@ -83,17 +104,25 @@ class ModelNew(nn.Module):
         w = conv.weight.contiguous()
         y = torch.empty((B, Cout, Hout, Wout), device=x.device, dtype=x.dtype)
 
-        BLOCK_M = 32
+        bias = conv.bias
+        has_bias = bias is not None
+        b_ptr = bias.contiguous() if has_bias else x  # dummy ptr when no bias
+
+        # Cout=96 fits in a single M-block; the input gather (x_off) is
+        # independent of offs_m, so a multi-block M-grid re-gathers the same
+        # scattered input 3x. One M-block removes that redundancy and relieves
+        # the memory pipeline (was 82% busy at SM 20%).
+        BLOCK_M = 128
         BLOCK_N = 64
-        BLOCK_K = 16
-        grid = (B, triton.cdiv(Cout, BLOCK_M), Hout * triton.cdiv(Wout, BLOCK_N))
+        BLOCK_K = 32
+        grid = (triton.cdiv(Cout, BLOCK_M),
+                triton.cdiv(B * Hout * Wout, BLOCK_N))
         _conv2d_kernel[grid](
-            x, w, y,
+            x, w, b_ptr, y,
             B, Cin, H, W, Cout, Hout, Wout,
+            HAS_BIAS=has_bias,
             KH=KH, KW=KW, SH=SH, SW=SW, PH=PH, PW=PW,
             BLOCK_M=BLOCK_M, BLOCK_N=BLOCK_N, BLOCK_K=BLOCK_K,
-            num_warps=4,
+            num_warps=8, num_stages=2,
         )
-        if conv.bias is not None:
-            y += conv.bias.view(1, Cout, 1, 1)
         return y

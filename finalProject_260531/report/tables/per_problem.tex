@@ -8,38 +8,38 @@
 \toprule
 Lv & PID & Operator & Technique & Correct & Kernel (ms) & Eager (ms) & Sp.\ eager & Sp.\ compile \\
 \midrule
-1 & 6 & Matmul (large K) & Triton split-K; cuBLAS-bound & \checkmark & 8.820 & 4.660 & 0.53$\times$ & 0.53$\times$ \\
-1 & 9 & Tall-skinny matmul & Triton tile; cuBLAS-bound & \checkmark & 7.820 & 6.370 & 0.81$\times$ & 0.81$\times$ \\
-1 & 16 & Matmul $A^\top B$ & Triton tl.trans & \checkmark & 14.000 & 9.650 & 0.69$\times$ & 0.69$\times$ \\
-1 & 18 & Matmul $A^\top B^\top$ & Triton double trans & \checkmark & 15.100 & 9.130 & 0.60$\times$ & 0.60$\times$ \\
-1 & 23 & Softmax (wide row) & streaming online softmax & \checkmark & 24.700 & 34.700 & \textbf{1.40$\times$} & \textbf{1.35$\times$} \\
+1 & 6 & Matmul (large K) & Triton split-K ($SK{=}20$); cuBLAS ceiling & \checkmark & 6.430 & 4.680 & 0.73$\times$ & 0.76$\times$ \\
+1 & 9 & Tall-skinny matmul & Triton tile, mask-free; cuBLAS ceiling & \checkmark & 7.310 & 6.460 & 0.88$\times$ & 0.88$\times$ \\
+1 & 16 & Matmul $A^\top B$ & Triton single tl.trans & \checkmark & 11.800 & 9.660 & 0.82$\times$ & 0.82$\times$ \\
+1 & 18 & Matmul $A^\top B^\top$ & Reformulated $(BA)^\top$; store-side trans & \checkmark & 11.800 & 9.150 & 0.78$\times$ & 0.78$\times$ \\
+1 & 23 & Softmax (wide row) & streaming online softmax & \checkmark & 24.700 & 34.700 & \textbf{1.40$\times$} & \textbf{1.34$\times$} \\
 1 & 36 & RMSNorm & 2-pass streaming & \checkmark & 28.700 & 48.400 & \textbf{1.69$\times$} & \textbf{1.06$\times$} \\
-1 & 47 & Sum reduction & cub-bound & \checkmark & 13.300 & 11.900 & 0.89$\times$ & \textbf{1.02$\times$} \\
-1 & 50 & Conv2D (11x11 s4) & Triton implicit GEMM & \checkmark & 158.000 & 7.840 & 0.05$\times$ & 0.05$\times$ \\
-1 & 56 & Conv2D (asymmetric) & Triton implicit GEMM & \checkmark & 82.200 & 49.300 & 0.60$\times$ & 0.52$\times$ \\
-1 & 61 & ConvTranspose3D & Triton gather GEMM & \checkmark & 77.400 & 27.800 & 0.36$\times$ & 0.57$\times$ \\
-1 & 76 & Conv1D (dilated) & Triton implicit GEMM & \checkmark & 514.000 & 40.800 & 0.08$\times$ & 0.08$\times$ \\
+1 & 47 & Sum reduction & cub-bound & \checkmark & 12.500 & 11.900 & 0.95$\times$ & \textbf{1.09$\times$} \\
+1 & 50 & Conv2D (11x11 s4) & Triton implicit GEMM & \checkmark & 15.900 & 8.110 & 0.51$\times$ & 0.55$\times$ \\
+1 & 56 & Conv2D (asymmetric) & Triton implicit GEMM & \checkmark & 74.800 & 21.700 & 0.29$\times$ & 0.35$\times$ \\
+1 & 61 & ConvTranspose3D & Triton gather GEMM & \checkmark & 77.300 & 31.400 & 0.41$\times$ & 0.41$\times$ \\
+1 & 76 & Conv1D (dilated) & Triton implicit GEMM & \checkmark & 70.800 & 45.600 & 0.64$\times$ & 0.64$\times$ \\
 1 & 82 & Depthwise Conv2D & Triton direct 3x3 (beats cuDNN) & \checkmark & 3.840 & 5.030 & \textbf{1.31$\times$} & \textbf{2.22$\times$} \\
-1 & 86 & Depthwise-sep Conv2D & Triton dw + cuBLAS pw & \checkmark & 14.200 & 16.000 & \textbf{1.13$\times$} & \textbf{1.17$\times$} \\
-1 & 93 & Masked cumsum & fused mask+scan & \checkmark & 32.100 & 31.900 & 0.99$\times$ & 0.50$\times$ \\
-1 & 97 & Scaled dot-prod attn & Triton flash-attn (D-tiled) & \checkmark & 1140.000 & 109.000 & 0.10$\times$ & 0.10$\times$ \\
+1 & 86 & Depthwise-sep Conv2D & Triton dw + cuBLAS pw & \checkmark & 9.510 & 11.100 & \textbf{1.17$\times$} & \textbf{1.74$\times$} \\
+1 & 93 & Masked cumsum & fused mask+scan & \checkmark & 16.800 & 31.400 & \textbf{1.87$\times$} & 0.97$\times$ \\
+1 & 97 & Scaled dot-prod attn & Triton flash-attn (D-tiled) & \checkmark & 739.000 & 110.000 & 0.15$\times$ & 0.15$\times$ \\
 \midrule
-2 & 1 & Conv+ReLU+Bias & cuDNN + fused epilogue & \checkmark & 22.600 & 24.400 & \textbf{1.08$\times$} & \textbf{1.09$\times$} \\
-2 & 12 & Gemm+Mul+LeakyReLU & cuBLAS-bound & \checkmark & 9.800 & 9.890 & \textbf{1.01$\times$} & 0.97$\times$ \\
-2 & 21 & Conv+Scale+Sig+GN & 5 passes -> 2 & \checkmark & 12.400 & 18.000 & \textbf{1.45$\times$} & \textbf{1.02$\times$} \\
-2 & 22 & Matmul+Clamp+LSE+Mish & algebraic + 1-pass post & \checkmark & 9.760 & 10.200 & \textbf{1.05$\times$} & \textbf{1.00$\times$} \\
-2 & 40 & Matmul+Scale+Residual & $ys{+}y\to y(s{+}1)$ & \checkmark & 38.900 & 40.300 & \textbf{1.04$\times$} & 0.97$\times$ \\
-2 & 45 & Gemm+Sigmoid+LSE & two GEMMs dominate & \checkmark & 29.500 & 29.900 & \textbf{1.01$\times$} & 0.98$\times$ \\
-2 & 56 & Matmul+Sigmoid+Sum & cuBLAS-bound & \checkmark & 20.000 & 20.100 & \textbf{1.01$\times$} & \textbf{1.00$\times$} \\
-2 & 66 & Matmul+Dropout+Softmax & dropout-RNG fix & \checkmark & 5.000 & 5.040 & \textbf{1.01$\times$} & 1.00$\times$ \\
-2 & 88 & Gemm+GN+Swish+Mul+Sw & 5 passes -> 2 & \checkmark & 10.500 & 10.600 & \textbf{1.01$\times$} & 0.94$\times$ \\
-2 & 99 & Gemm+GELU+Softmax & cuBLAS-bound & \checkmark & 9.870 & 9.900 & \textbf{1.00$\times$} & 0.97$\times$ \\
+2 & 1 & Conv+ReLU+Bias & cuDNN + fused epilogue & \checkmark & 22.600 & 24.300 & \textbf{1.08$\times$} & \textbf{1.09$\times$} \\
+2 & 12 & Gemm+Mul+LeakyReLU & cuBLAS-bound & \checkmark & 9.880 & 9.990 & \textbf{1.01$\times$} & 0.96$\times$ \\
+2 & 21 & Conv+Scale+Sig+GN & 5 passes -> 2 & \checkmark & 12.400 & 18.000 & \textbf{1.45$\times$} & \textbf{1.15$\times$} \\
+2 & 22 & Matmul+Clamp+LSE+Mish & algebraic + 1-pass post & \checkmark & 9.850 & 10.300 & \textbf{1.05$\times$} & 0.97$\times$ \\
+2 & 40 & Matmul+Scale+Residual & $ys{+}y\to y(s{+}1)$ & \checkmark & 38.600 & 40.800 & \textbf{1.06$\times$} & 0.98$\times$ \\
+2 & 45 & Gemm+Sigmoid+LSE & two GEMMs dominate & \checkmark & 29.700 & 30.100 & \textbf{1.01$\times$} & 0.98$\times$ \\
+2 & 56 & Matmul+Sigmoid+Sum & cuBLAS-bound & \checkmark & 20.200 & 20.200 & \textbf{1.00$\times$} & \textbf{1.00$\times$} \\
+2 & 66 & Matmul+Dropout+Softmax & dropout-RNG fix & \checkmark & 5.160 & 5.290 & \textbf{1.03$\times$} & 0.99$\times$ \\
+2 & 88 & Gemm+GN+Swish+Mul+Sw & 5 passes -> 2 & \checkmark & 9.890 & 10.700 & \textbf{1.08$\times$} & \textbf{1.01$\times$} \\
+2 & 99 & Gemm+GELU+Softmax & cuBLAS-bound & \checkmark & 9.940 & 9.990 & \textbf{1.01$\times$} & 0.99$\times$ \\
 \midrule
-3 & 1 & MLP & cuBLAS-bound; in-place ReLU & \checkmark & 12.800 & 12.800 & \textbf{1.00$\times$} & 0.98$\times$ \\
-3 & 28 & Vision Transformer & small B; SDPA & \checkmark & 2.690 & 2.630 & 0.98$\times$ & \textbf{1.10$\times$} \\
-3 & 43 & minGPT causal attn & SDPA is\_causal & \checkmark & 28.900 & 43.800 & \textbf{1.52$\times$} & \textbf{1.21$\times$} \\
-3 & 44 & minGPT block & SDPA + gelu(tanh) & \checkmark & 77.200 & 107.000 & \textbf{1.39$\times$} & \textbf{1.06$\times$} \\
-3 & 48 & Mamba-2 (return Y) & keep einsum path & \checkmark & 23.900 & 25.300 & \textbf{1.06$\times$} & 0.69$\times$ \\
+3 & 1 & MLP & torch.compile (Inductor) wrap & \checkmark & 12.200 & 13.100 & \textbf{1.07$\times$} & \textbf{1.03$\times$} \\
+3 & 28 & Vision Transformer & torch.compile (Inductor) wrap & \checkmark & 2.990 & 2.620 & 0.88$\times$ & 0.99$\times$ \\
+3 & 43 & minGPT causal attn & SDPA is\_causal & \checkmark & 29.200 & 43.900 & \textbf{1.50$\times$} & \textbf{1.21$\times$} \\
+3 & 44 & minGPT block & SDPA + gelu(tanh) & \checkmark & 78.100 & 108.000 & \textbf{1.38$\times$} & \textbf{1.06$\times$} \\
+3 & 48 & Mamba-2 (return Y) & param-only contraction hoist & \checkmark & 16.000 & 25.300 & \textbf{1.58$\times$} & \textbf{1.03$\times$} \\
 \bottomrule
 \end{tabular}
 \end{table*}

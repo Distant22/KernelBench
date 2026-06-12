@@ -30,10 +30,29 @@ finalProject_260531/_run5_isolated.sh
 finalProject_260531/_run_p76_p97.sh
 # original fallback solutions kept only for local rollback (git history already has them)
 finalProject_260531/solutions/level1/_fallback_backup/
-# Native/heavy profiler artifacts; keep profile.json and feedback.md tracked.
-finalProject_260531/results/profiles/**/*.nsys-rep
-finalProject_260531/results/profiles/**/*.ncu-rep
-finalProject_260531/results/profiles/**/*.sqlite
-finalProject_260531/results/profiles/**/*.csv
-finalProject_260531/results/profiles/**/*_torch_profile.json
-finalProject_260531/results/profiles/slurm-*.out
+# Profiler artifacts are agent-facing outputs only and too large to push; ignore the whole folder.
+finalProject_260531/results/profiles/
+
+# --- finalProject_260531: additional throwaway artifacts (do not push) ---
+# throwaway dev/run helper scripts (underscore-prefixed)
+finalProject_260531/_*.py
+finalProject_260531/_*.sh
+# timestamped JSON backups (e.g. eval_all_v100.json.bak.20260612_171103)
+*.bak.*
+# Slurm stdout/stderr logs
+finalProject_260531/results/*.err
+finalProject_260531/results/*.out
+kb_eval-*.err
+kb_eval-*.out
+# fallback solution backups for all levels (history already has them)
+finalProject_260531/solutions/**/_fallback_backup/
+# compute-node intermediate eval logs (final results live in eval_all_v100.json)
+finalProject_260531/results/*_compute_node.jsonl
+finalProject_260531/results/LEVEL1_login_vs_compute.md
+# scratch notes / level-1 launcher
+finalProject_260531/compare.md
+time.md
+finalProject_260531/run_level1.sbatch
+# new conference paper draft + template (content copied into report/main.tex)
+finalProject_260531/report/paper.tex
+finalProject_260531/report/padp-final-templates/

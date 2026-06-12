@@ -87,6 +87,9 @@ Agent 將上述可重用結論寫入 repo-scoped memory：
 ## E. 本次收尾新增的工具（非改 Agent 本身，為產生正式指標）
 | 檔案 | 用途 |
 |------|------|
+| `finalProject_260531/profile_feedback.py` | Nsight 量測驅動：在 compute node 上對 candidate / eager / compile 三條路徑收 Nsight Systems timeline（kernel 數、各 kernel 時間、CUDA API overhead），`--deep` 時再以 Nsight Compute 對覆蓋 ≥80% GPU time 的主要 kernel 收 HW counters，產生 agent-facing `feedback.md` 與結構化 `profile.json`。 |
+| `finalProject_260531/profile_feedback.sbatch` | 上述驅動的 Slurm 包裝：限 compute node 執行，自動載入 Nsight (HPC SDK module)、設定 account/partition/時限，提供 `doctor`（環境健檢）與 `profile` 兩種子指令。 |
+| `finalProject_260531/install_nsight_tools.sh` | 安裝 / 定位 repo-local Nsight Systems + Nsight Compute，確保 compute node 上 `nsys` / `ncu` 與 non-admin hardware counters 可用。 |
 | `finalProject_260531/run_eval_all.py` | 30 題批次評估驅動：每題獨立子行程，量 correctness/kernel/eager/compile，算 fast_p，輸出 V100 baseline 計時檔。 |
 | `finalProject_260531/report/raw_data/export_conversation.py` | 從 Copilot Chat session-store 匯出完整對話逐字稿（input/output 原始資料）。 |
 | `finalProject_260531/report/generate_tables.py` | 由評估 JSON 自動生成論文的 `fast_p` 表、逐題表與頭條數字巨集。 |

@@ -23,10 +23,17 @@ done
 
 =============================================
 🎉 環境建置完成！
-請依序執行以下指令開始作業：
-1. module load cuda
-2. conda activate kernelbench
-3. python ./finalProject_260531/check.py
+⚠️ TWCC 規定：請勿在 login node 直接跑程式，一律用 srun / sbatch 丟到 compute node。
+
+批次評測 (建議)：
+  sbatch finalProject_260531/run_eval_all.sbatch
+  squeue -u $USER          # 查作業狀態
+
+互動式測試 (快速 debug，gtest partition 30 分鐘上限)：
+  srun -A ACD115083 -p gtest -N 1 -n 1 -c 4 --gres=gpu:1 -t 00:30:00 --pty bash
+  # 進入 compute node 後：
+  #   module load cuda && conda activate kernelbench
+  #   python ./finalProject_260531/check.py
 =============================================
 ```
 

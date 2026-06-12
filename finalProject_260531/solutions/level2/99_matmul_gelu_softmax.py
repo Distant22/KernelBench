@@ -37,28 +37,24 @@ def _gelu_softmax_row_kernel(
     row = tl.program_id(0)
     base = row * N
 
-    # Pass 1: max(gelu(x))
+    # Pass 1: online max + sumexp in a single read (flash-style rescaling).
     rmax = float("-inf")
-    for off in range(0, N, BLOCK):
-        offs = off + tl.arange(0, BLOCK)
-        mask = offs < N
-        v = tl.load(x_ptr + base + offs, mask=mask, other=float("-inf"))
-        g = _gelu(v)
-        g = tl.where(mask, g, float("-inf"))
-        rmax = tl.maximum(rmax, tl.max(g, axis=0))
-
-    # Pass 2: sum(exp(gelu(x) - rmax))
     rsum = 0.0
     for off in range(0, N, BLOCK):
         offs = off + tl.arange(0, BLOCK)
         mask = offs < N
         v = tl.load(x_ptr + base + offs, mask=mask, other=float("-inf"))
         g = _gelu(v)
-        e = tl.exp(g - rmax)
-        rsum += tl.sum(tl.where(mask, e, 0.0), axis=0)
+        g = tl.where(mask, g, float("-inf"))
+        block_max = tl.max(g, axis=0)
+        new_max = tl.maximum(rmax, block_max)
+        rsum = rsum * tl.exp(rmax - new_max) + tl.sum(
+            tl.where(mask, tl.exp(g - new_max), 0.0), axis=0
+        )
+        rmax = new_max
     inv = 1.0 / rsum
 
-    # Pass 3: out = exp(gelu(x) - rmax) / rsum
+    # Pass 2: out = exp(gelu(x) - rmax) / rsum
     for off in range(0, N, BLOCK):
         offs = off + tl.arange(0, BLOCK)
         mask = offs < N

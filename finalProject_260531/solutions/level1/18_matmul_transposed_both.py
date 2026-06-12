@@ -3,10 +3,13 @@ KernelBench Level 1 / Problem 18 — Matmul with both operands transposed: C = A
 
 Shapes: A (K=8192, M=2048), B (N=4096, K=8192) -> C (M=2048, N=4096)  [FP32]
 
-V100 strategy:
-- A is (K, M) row-major: load (BLOCK_K, BLOCK_M) coalesced along M, then tl.trans.
-- B is (N, K) row-major: load (BLOCK_N, BLOCK_K) coalesced along K, then tl.trans.
-- Standard tiled GEMM with super-grouped pid ordering for L2 reuse.
+V100 strategy (reformulated):
+- C = A.T @ B.T = (B @ A).T.  Compute D = B @ A directly: D[n, m] = sum_k B[n,k]*A[k,m] = C[m,n].
+- B is (N, K) row-major: load (BLOCK_N, BLOCK_K) tile coalesced along K -> standard lhs.
+- A is (K, M) row-major: load (BLOCK_K, BLOCK_M) tile coalesced along M -> standard rhs.
+- tl.dot(b_tile, a_tile) needs NO in-loop transpose (the old double-trans spilled regs).
+- Accumulate (BLOCK_N, BLOCK_M), transpose ONCE at the end, coalesced store to C.
+- Super-grouped pid ordering for L2 reuse.
 """
 
 import torch
@@ -41,24 +44,27 @@ def _matmul_at_bt_kernel(
     offs_n = pid_n * BLOCK_N + tl.arange(0, BLOCK_N)
     offs_k = tl.arange(0, BLOCK_K)
 
-    a_ptrs = A_ptr + offs_k[:, None] * stride_ak + offs_m[None, :] * stride_am
+    # D = B @ A, D[n,m] = sum_k B[n,k] * A[k,m].
+    # b_tile: (BLOCK_N, BLOCK_K) coalesced along K (stride_bk == 1).
+    # a_tile: (BLOCK_K, BLOCK_M) coalesced along M (stride_am == 1).
     b_ptrs = B_ptr + offs_n[:, None] * stride_bn + offs_k[None, :] * stride_bk
+    a_ptrs = A_ptr + offs_k[:, None] * stride_ak + offs_m[None, :] * stride_am
 
-    acc = tl.zeros((BLOCK_M, BLOCK_N), dtype=tl.float32)
+    acc = tl.zeros((BLOCK_N, BLOCK_M), dtype=tl.float32)
 
+    # M, N, K are exact multiples of the block sizes for this problem
+    # (M=2048, N=4096, K=8192), so all bounds masks are statically true.
+    # Dropping them removes per-iteration predicate overhead in the hot loop.
     for k in range(0, K, BLOCK_K):
-        k_remaining = K - k
-        a_mask = (offs_k[:, None] < k_remaining) & (offs_m[None, :] < M)
-        b_mask = (offs_n[:, None] < N) & (offs_k[None, :] < k_remaining)
-        a = tl.load(a_ptrs, mask=a_mask, other=0.0)  # (BLOCK_K, BLOCK_M)
-        b = tl.load(b_ptrs, mask=b_mask, other=0.0)  # (BLOCK_N, BLOCK_K)
-        acc += tl.dot(tl.trans(a), tl.trans(b), allow_tf32=False)
-        a_ptrs += BLOCK_K * stride_ak
+        b = tl.load(b_ptrs)  # (BLOCK_N, BLOCK_K)
+        a = tl.load(a_ptrs)  # (BLOCK_K, BLOCK_M)
+        acc += tl.dot(b, a, allow_tf32=False)  # (BLOCK_N, BLOCK_M); no in-loop transpose
         b_ptrs += BLOCK_K * stride_bk
+        a_ptrs += BLOCK_K * stride_ak
 
+    # acc[n_local, m_local] = C[m, n]; transpose once -> (BLOCK_M, BLOCK_N), coalesced store.
     c_ptrs = C_ptr + offs_m[:, None] * stride_cm + offs_n[None, :] * stride_cn
-    c_mask = (offs_m[:, None] < M) & (offs_n[None, :] < N)
-    tl.store(c_ptrs, acc, mask=c_mask)
+    tl.store(c_ptrs, tl.trans(acc))
 
 
 def _launch_at_bt(A: torch.Tensor, B: torch.Tensor) -> torch.Tensor:
@@ -89,7 +95,7 @@ def _launch_at_bt(A: torch.Tensor, B: torch.Tensor) -> torch.Tensor:
         BLOCK_N=BLOCK_N,
         BLOCK_K=BLOCK_K,
         GROUP_M=GROUP_M,
-        num_warps=4,
+        num_warps=8,
         num_stages=3,
     )
     return C

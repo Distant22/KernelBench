@@ -1,41 +1,20 @@
 """Level 2 task 40: Linear + (clone + scale + residual-add).
 
 Observation: `y * s + y_clone == y * (s + 1)`. So the post-op collapses to a
-single per-element scalar multiply. We fuse it into the linear's bias-add by
-just calling F.linear and a single Triton scale kernel.
+single per-element scalar multiply by `(s + 1)`. Because that factor is a
+compile-time constant, we fold it directly into the Linear weight and bias in
+`__init__`:
 
-CoT
----
-1. GEMM (16384×4096×4096) compute-bound, cuBLAS ~ peak.
-2. Replace 3 elementwise kernels (clone / scale / add) with 1 fused multiply.
-3. 1D flattened, BLOCK=4096, num_warps=8, coalesced access.
-4. See code.
+    y = (x @ (W*(s+1)).T) + b*(s+1)
+
+so the whole forward is a single cuBLAS GEMM with NO epilogue kernel at all.
+torch.compile still emits matmul + a fused scale epilogue (extra ~2 GB output
+round-trip); pre-scaling the parameters removes that entirely.
 """
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import triton
-import triton.language as tl
-
-
-@triton.jit
-def _scale_kernel(x_ptr, y_ptr, coef, n, BLOCK: tl.constexpr):
-    pid = tl.program_id(0)
-    offs = pid * BLOCK + tl.arange(0, BLOCK)
-    mask = offs < n
-    v = tl.load(x_ptr + offs, mask=mask, other=0.0)
-    tl.store(y_ptr + offs, v * coef, mask=mask)
-
-
-def fused_scale(x: torch.Tensor, coef: float) -> torch.Tensor:
-    x = x.contiguous()
-    out = torch.empty_like(x)
-    n = x.numel()
-    BLOCK = 4096
-    grid = (triton.cdiv(n, BLOCK),)
-    _scale_kernel[grid](x, out, float(coef), n, BLOCK=BLOCK, num_warps=8)
-    return out
 
 
 class ModelNew(nn.Module):
@@ -43,7 +22,10 @@ class ModelNew(nn.Module):
         super().__init__()
         self.matmul = nn.Linear(in_features, out_features)
         self.scaling_factor = float(scaling_factor)
+        coef = self.scaling_factor + 1.0
+        with torch.no_grad():
+            self.weight = nn.Parameter(self.matmul.weight * coef)
+            self.bias = nn.Parameter(self.matmul.bias * coef)
 
     def forward(self, x):
-        y = F.linear(x, self.matmul.weight, self.matmul.bias)
-        return fused_scale(y, self.scaling_factor + 1.0)
+        return F.linear(x, self.weight, self.bias)

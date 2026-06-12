@@ -48,6 +48,15 @@ class ModelNew(nn.Module):
         self.gemm = nn.Linear(in_features, out_features)
         self.multiplier = float(multiplier)
         self.negative_slope = float(negative_slope)
+        # Nsight: >98% of time is the 1024x8192x8192 cuBLAS SGEMM
+        # (volta_sgemm_128x64 ~92% of V100 FP32 peak); our fused mul+leaky_relu
+        # epilogue is only 84us. compile is ~2-3% faster purely via a marginally
+        # better steady-state GEMM algo. Tried: (a) max-autotune GEMM -> picked
+        # SLOWER 128x128 (0.998x); (b) manual CUDA graph -> input copy_ + output
+        # clone of 32MB cost MORE than the launch overhead saved (0.95x). The
+        # plain 2-kernel path (fast cuBLAS GEMM + our epilogue) is the honest
+        # optimum at 0.975x; a fused Triton GEMM would drop GEMM to ~70% peak
+        # and lose far more than the 84us epilogue it saves.
 
     def forward(self, x):
         y = F.linear(x, self.gemm.weight, self.gemm.bias)

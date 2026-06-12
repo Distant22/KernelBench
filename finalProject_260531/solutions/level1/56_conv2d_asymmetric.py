@@ -92,7 +92,10 @@ class ModelNew(nn.Module):
         w = self.conv2d.weight.contiguous()
         y = torch.empty((B, Cout, Hout, Wout), device=x.device, dtype=x.dtype)
 
-        BLOCK_M = 64
+        # Cout=128 fits one M-block; the x gather (x_off) is independent of
+        # offs_m, so BLOCK_M<Cout re-gathers the same input Mgrid times.
+        # BLOCK_M=128 -> Mgrid=1 (gather once). BLOCK_N=128 better intensity.
+        BLOCK_M = 128
         BLOCK_N = 128
         BLOCK_K = 64 if Cin >= 64 else triton.next_power_of_2(Cin)
         grid = (B, triton.cdiv(Cout, BLOCK_M), Hout * triton.cdiv(Wout, BLOCK_N))
@@ -101,6 +104,6 @@ class ModelNew(nn.Module):
             B, Cin, H, W, Cout, Hout, Wout,
             KH=KH, KW=KW, SH=self.SH, SW=self.SW, PH=self.PH, PW=self.PW,
             BLOCK_M=BLOCK_M, BLOCK_N=BLOCK_N, BLOCK_K=BLOCK_K,
-            num_warps=4,
+            num_warps=16,
         )
         return y
